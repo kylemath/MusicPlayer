@@ -1,21 +1,16 @@
-import { useMemo } from 'react';
+import { useCallback } from 'react';
 import { List } from 'react-window';
-import type { Song } from '../types';
-import { RefreshCw } from 'lucide-react';
+import type { Song, SortColumn, SortDirection } from '../types';
+import { RefreshCw, ArrowUp, ArrowDown } from 'lucide-react';
 
 interface LibraryProps {
   songs: Song[];
-  filterType: 'All' | 'Artists' | 'Albums';
-  filterValue: string;
+  sortColumn: SortColumn;
+  sortDirection: SortDirection;
+  onSort: (column: SortColumn, direction: SortDirection) => void;
   onPlay: (song: Song) => void;
   currentSongId?: string;
   onRescan: () => void;
-}
-
-interface RowExtraProps {
-  filteredSongs: Song[];
-  currentSongId?: string;
-  onPlay: (song: Song) => void;
 }
 
 const ROW_HEIGHT = 28;
@@ -27,11 +22,17 @@ function formatTime(time: number) {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
-function SongRow(
-  props: { ariaAttributes: { "aria-posinset": number; "aria-setsize": number; role: "listitem" }; index: number; style: React.CSSProperties } & RowExtraProps
-) {
-  const { index, style, filteredSongs, currentSongId, onPlay } = props;
-  const song = filteredSongs[index];
+interface SongRowProps {
+  index: number;
+  style: React.CSSProperties;
+  ariaAttributes?: Record<string, unknown>;
+  songs: Song[];
+  currentSongId?: string;
+  onPlay: (song: Song) => void;
+}
+
+function SongRow({ index, style, songs, currentSongId, onPlay }: SongRowProps) {
+  const song = songs[index];
   if (!song) return null;
 
   const isCurrent = song.id === currentSongId;
@@ -59,27 +60,61 @@ function SongRow(
   );
 }
 
-export function Library({ songs, filterType, filterValue, onPlay, currentSongId, onRescan }: LibraryProps) {
-  const filteredSongs = useMemo(() => {
-    let result = songs;
-    if (filterType === 'Artists' && filterValue) {
-      result = result.filter(s => s.artist === filterValue);
-    } else if (filterType === 'Albums' && filterValue) {
-      result = result.filter(s => s.album === filterValue);
-    }
-    return result;
-  }, [songs, filterType, filterValue]);
+function SortHeader({
+  label,
+  column,
+  currentColumn,
+  direction,
+  onSort,
+}: {
+  label: string;
+  column: SortColumn;
+  currentColumn: SortColumn;
+  direction: SortDirection;
+  onSort: (col: SortColumn, dir: SortDirection) => void;
+}) {
+  const isActive = currentColumn === column;
+  const handleClick = useCallback(() => {
+    onSort(column, isActive && direction === 'asc' ? 'desc' : 'asc');
+  }, [column, isActive, direction, onSort]);
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      className="flex items-center gap-0.5 hover:text-blue-600 dark:hover:text-blue-400 text-left"
+    >
+      {label}
+      {isActive && (direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}
+    </button>
+  );
+}
+
+export function Library({ songs, sortColumn, sortDirection, onSort, onPlay, currentSongId, onRescan }: LibraryProps) {
+  const rowProps = useCallback(
+    () => ({ songs, currentSongId, onPlay }),
+    [songs, currentSongId, onPlay]
+  )();
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Table Header */}
       <div className="flex items-center px-4 py-2 border-b border-gray-200 dark:border-gray-800 text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider bg-gray-50 dark:bg-[#1a1a1a]">
         <div className="w-8 flex-shrink-0"></div>
-        <div className="flex-1 min-w-0 pr-4">Name</div>
-        <div className="w-16 flex-shrink-0 text-right pr-4">Time</div>
-        <div className="flex-1 min-w-0 pr-4">Artist</div>
-        <div className="flex-1 min-w-0 pr-4">Album</div>
-        <div className="w-24 flex-shrink-0">Genre</div>
+        <div className="flex-1 min-w-0 pr-4">
+          <SortHeader label="Name" column="title" currentColumn={sortColumn} direction={sortDirection} onSort={onSort} />
+        </div>
+        <div className="w-16 flex-shrink-0 text-right pr-4">
+          <SortHeader label="Time" column="duration" currentColumn={sortColumn} direction={sortDirection} onSort={onSort} />
+        </div>
+        <div className="flex-1 min-w-0 pr-4">
+          <SortHeader label="Artist" column="artist" currentColumn={sortColumn} direction={sortDirection} onSort={onSort} />
+        </div>
+        <div className="flex-1 min-w-0 pr-4">
+          <SortHeader label="Album" column="album" currentColumn={sortColumn} direction={sortDirection} onSort={onSort} />
+        </div>
+        <div className="w-24 flex-shrink-0">
+          <SortHeader label="Genre" column="genre" currentColumn={sortColumn} direction={sortDirection} onSort={onSort} />
+        </div>
         <div className="w-16 flex-shrink-0 flex justify-end">
           <button onClick={onRescan} className="hover:text-blue-500 transition-colors" title="Rescan Library">
             <RefreshCw size={14} />
@@ -88,13 +123,13 @@ export function Library({ songs, filterType, filterValue, onPlay, currentSongId,
       </div>
 
       {/* Virtualized Table Body */}
-      <div className="flex-1 overflow-hidden">
-        {filteredSongs.length > 0 ? (
+      <div className="flex-1 overflow-hidden min-h-0">
+        {songs.length > 0 ? (
           <List
             rowComponent={SongRow}
-            rowCount={filteredSongs.length}
+            rowCount={songs.length}
             rowHeight={ROW_HEIGHT}
-            rowProps={{ filteredSongs, currentSongId, onPlay }}
+            rowProps={rowProps}
             overscanCount={20}
             style={{ height: '100%' }}
           />

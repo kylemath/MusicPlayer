@@ -10,6 +10,12 @@ export interface Song {
   fileHandle: FileSystemFileHandle;
 }
 
+export interface Playlist {
+  id: string;
+  name: string;
+  songIds: string[];
+}
+
 export interface LibraryState {
   songs: Song[];
   artists: string[];
@@ -17,3 +23,6 @@ export interface LibraryState {
   isLoading: boolean;
   error: string | null;
 }
+
+export type SortColumn = 'title' | 'artist' | 'album' | 'duration' | 'genre';
+export type SortDirection = 'asc' | 'desc';

@@ -31,3 +31,35 @@ body {
 .hl-constant { color: #79c0ff; }
 .hl-op       { color: #c9d1d9; }
 .hl-bracket  { color: #8b949e; }
+
+/* ─── EQ vertical sliders ─────────────────── */
+.eq-slider {
+  cursor: pointer;
+}
+.eq-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #3b82f6;
+  border: 2px solid #1e3a5f;
+  cursor: pointer;
+}
+.eq-slider::-webkit-slider-runnable-track {
+  background: linear-gradient(to top, #334155, #475569);
+  border-radius: 4px;
+  width: 4px;
+}
+.eq-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #3b82f6;
+  border: 2px solid #1e3a5f;
+  cursor: pointer;
+}
+.eq-slider::-moz-range-track {
+  background: linear-gradient(to top, #334155, #475569);
+  border-radius: 4px;
+  width: 4px;
+}

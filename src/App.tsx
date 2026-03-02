@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import type { Song } from './types';
-import { getDirectoryHandle, saveDirectoryHandle, getSongsCache, saveSongsCache } from './db';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import type { Song, SortColumn, SortDirection } from './types';
+import { getDirectoryHandle, saveDirectoryHandle, getSongsCache, saveSongsCache, getPlaylists, savePlaylists } from './db';
 import { collectFiles, parseMetadataInBackground } from './lib/scanner';
 import { Player } from './components/Player';
 import { Sidebar } from './components/Sidebar';
@@ -8,6 +8,15 @@ import { Library } from './components/Library';
 import { Visualizer } from './components/Visualizer';
 import { ResizeHandle } from './components/ResizeHandle';
 import { FolderOpen, Loader2, Activity } from 'lucide-react';
+
+function shuffleArray<T>(arr: T[]): T[] {
+  const out = [...arr];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
 
 function clamp(val: number, min: number, max: number) {
   return Math.max(min, Math.min(max, val));
@@ -23,16 +32,29 @@ function App() {
   const [currentSong, setCurrentSong] = useState<Song | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
 
-  const [filterType, setFilterType] = useState<'All' | 'Artists' | 'Albums'>('All');
+  const [filterType, setFilterType] = useState<'All' | 'Artists' | 'Albums' | 'Playlist'>('All');
   const [filterValue, setFilterValue] = useState<string>('');
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchQueryDebounced, setSearchQueryDebounced] = useState('');
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    searchDebounceRef.current = setTimeout(() => setSearchQueryDebounced(searchQuery), 150);
+    return () => { if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current); };
+  }, [searchQuery]);
+
+  const [sortColumn, setSortColumn] = useState<SortColumn>('title');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+  const [shuffleOn, setShuffleOn] = useState(false);
+  const [playlists, setPlaylistsState] = useState<{ id: string; name: string; songIds: string[] }[]>([]);
 
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
   const [showVisualizer, setShowVisualizer] = useState(true);
 
   // ─── Resizable column widths (px) ───────────────────
   const [sidebarW, setSidebarW] = useState(220);
-  const [canvasW, setCanvasW] = useState(320);
-  const [editorW, setEditorW] = useState(360);
+  const [vizPanelW, setVizPanelW] = useState(520);
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -52,6 +74,8 @@ function App() {
           }
         }
       }
+      const list = await getPlaylists();
+      setPlaylistsState(list);
     }
     init();
   }, []);
@@ -125,17 +149,79 @@ function App() {
 
   const playSong = (song: Song) => { setCurrentSong(song); setIsPlaying(true); };
 
+  // Build current view list: filter by view (artist/album/playlist) -> search -> sort -> optional shuffle
+  const songListForView = useMemo(() => {
+    let list = songs;
+    if (filterType === 'Artists' && filterValue) {
+      list = list.filter(s => s.artist === filterValue);
+    } else if (filterType === 'Albums' && filterValue) {
+      list = list.filter(s => s.album === filterValue);
+    } else if (filterType === 'Playlist' && filterValue) {
+      const pl = playlists.find(p => p.id === filterValue);
+      const ids = pl ? new Set(pl.songIds) : new Set<string>();
+      list = list.filter(s => ids.has(s.id));
+    }
+    return list;
+  }, [songs, filterType, filterValue, playlists]);
+
+  const queue = useMemo(() => {
+    let list = songListForView;
+    if (searchQueryDebounced.trim()) {
+      const q = searchQueryDebounced.trim().toLowerCase();
+      const tagged: Record<string, string> = {};
+      const tagRegex = /(artist|album|title|name|genre):\s*([^\s]+)/gi;
+      let m;
+      while ((m = tagRegex.exec(q)) !== null) {
+        tagged[m[1].toLowerCase()] = m[2].toLowerCase();
+      }
+      const rest = q.replace(/(artist|album|title|name|genre):\s*[^\s]+/gi, '').replace(/\s+/g, ' ').trim();
+      const terms = rest ? rest.split(/\s+/).filter(Boolean) : [];
+      list = list.filter(s => {
+        if (tagged.artist && !s.artist.toLowerCase().includes(tagged.artist)) return false;
+        if (tagged.album && !s.album.toLowerCase().includes(tagged.album)) return false;
+        if ((tagged.title || tagged.name) && !s.title.toLowerCase().includes((tagged.title || tagged.name))) return false;
+        if (tagged.genre && !(s.genre || '').toLowerCase().includes(tagged.genre)) return false;
+        if (terms.length === 0 && Object.keys(tagged).length > 0) return true;
+        if (terms.length === 0) return true;
+        const all = `${s.title} ${s.artist} ${s.album} ${s.genre || ''}`.toLowerCase();
+        return terms.every(t => all.includes(t));
+      });
+    }
+    const sorted = [...list].sort((a, b) => {
+      let va: string | number = (a as any)[sortColumn] ?? '';
+      let vb: string | number = (b as any)[sortColumn] ?? '';
+      if (sortColumn === 'duration') {
+        va = Number(va) || 0;
+        vb = Number(vb) || 0;
+        return sortDirection === 'asc' ? va - vb : vb - va;
+      }
+      va = String(va).toLowerCase();
+      vb = String(vb).toLowerCase();
+      const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+      return sortDirection === 'asc' ? cmp : -cmp;
+    });
+    return shuffleOn ? shuffleArray(sorted) : sorted;
+  }, [songListForView, searchQueryDebounced, sortColumn, sortDirection, shuffleOn, playlists]);
+
+  const currentQueueIndex = currentSong ? queue.findIndex(s => s.id === currentSong.id) : -1;
+
   const nextSong = () => {
-    if (!currentSong) return;
-    const idx = songs.findIndex(s => s.id === currentSong.id);
-    if (idx !== -1 && idx < songs.length - 1) playSong(songs[idx + 1]);
+    if (!currentSong || currentQueueIndex < 0) return;
+    if (currentQueueIndex < queue.length - 1) playSong(queue[currentQueueIndex + 1]);
   };
 
   const prevSong = () => {
-    if (!currentSong) return;
-    const idx = songs.findIndex(s => s.id === currentSong.id);
-    if (idx !== -1 && idx > 0) playSong(songs[idx - 1]);
+    if (!currentSong || currentQueueIndex < 0) return;
+    if (currentQueueIndex > 0) playSong(queue[currentQueueIndex - 1]);
   };
+
+  const setPlaylists = useCallback((next: (prev: typeof playlists) => typeof playlists) => {
+    setPlaylistsState(prev => {
+      const updated = typeof next === 'function' ? next(prev) : next;
+      savePlaylists(updated);
+      return updated;
+    });
+  }, []);
 
   const handleAnalyserReady = useCallback((node: AnalyserNode) => setAnalyser(node), []);
 
@@ -145,22 +231,7 @@ function App() {
   }, []);
 
   const handleLibraryVizDrag = useCallback((delta: number) => {
-    // Dragging right = library grows, viz panel shrinks (reduce canvas first, then editor)
-    // Dragging left = library shrinks, viz panel grows (grow canvas first, then editor)
-    setCanvasW(cw => {
-      const newCw = clamp(cw - delta, 150, 800);
-      return newCw;
-    });
-  }, []);
-
-  const handleCanvasEditorDrag = useCallback((delta: number) => {
-    // Paired resize: canvas grows, editor shrinks (and vice versa)
-    setCanvasW(cw => {
-      const newCw = clamp(cw + delta, 180, 800);
-      const actualDelta = newCw - cw;
-      setEditorW(ew => clamp(ew - actualDelta, 180, 800));
-      return newCw;
-    });
+    setVizPanelW(w => clamp(w - delta, 320, 900));
   }, []);
 
   // ─── Welcome screen ────────────────────────────────
@@ -199,17 +270,31 @@ function App() {
         onNext={nextSong}
         onPrev={prevSong}
         onAnalyserReady={handleAnalyserReady}
+        shuffleOn={shuffleOn}
+        onShuffleToggle={() => setShuffleOn(s => !s)}
+        playlists={playlists}
+        onAddToPlaylist={(songId, playlistId) => {
+          setPlaylists(prev => prev.map(p => p.id === playlistId ? { ...p, songIds: p.songIds.includes(songId) ? p.songIds : [...p.songIds, songId] } : p));
+        }}
+        onCreatePlaylistAndAdd={(songId, name) => {
+          const id = `pl-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+          setPlaylists(prev => [...prev, { id, name, songIds: [songId] }]);
+        }}
       />
 
       <div className="flex flex-1 overflow-hidden">
         {/* ── Sidebar ── */}
-        <div className="shrink-0 h-full border-r border-gray-300 dark:border-gray-800" style={{ width: sidebarW }}>
+        <div className="shrink-0 h-full border-r border-gray-300 dark:border-gray-800 flex flex-col" style={{ width: sidebarW }}>
           <Sidebar
             songs={songs}
             filterType={filterType}
             setFilterType={setFilterType}
             filterValue={filterValue}
             setFilterValue={setFilterValue}
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            playlists={playlists}
+            onPlaylistsChange={setPlaylists}
           />
         </div>
 
@@ -236,25 +321,22 @@ function App() {
             </button>
           </div>
           <Library
-            songs={songs}
-            filterType={filterType}
-            filterValue={filterValue}
+            songs={queue}
+            sortColumn={sortColumn}
+            sortDirection={sortDirection}
+            onSort={(col, dir) => { setSortColumn(col); setSortDirection(dir); }}
             onPlay={playSong}
             currentSongId={currentSong?.id}
             onRescan={() => doScan(dirHandle)}
           />
         </div>
 
-        {/* ── Visualizer (canvas + editor) ── */}
+        {/* ── Visualizer (canvas + preset cards + editor pill) ── */}
         {showVisualizer && (
           <>
             <ResizeHandle onDrag={handleLibraryVizDrag} />
-            <div className="shrink-0 h-full" style={{ width: canvasW + editorW + 5 }}>
-              <Visualizer
-                analyser={analyser}
-                canvasWidth={canvasW}
-                onCanvasResize={handleCanvasEditorDrag}
-              />
+            <div className="shrink-0 h-full flex flex-col" style={{ width: vizPanelW }}>
+              <Visualizer analyser={analyser} />
             </div>
           </>
         )}
