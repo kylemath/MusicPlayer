@@ -373,4 +373,183 @@ function subdivide(x, y, w, h, fLo, fHi, depth) {
   }
 }
 `,
+
+
+  // ─── Classic Visualizers ────────────────────────────
+
+  "Radial Bars": `// ╔═══════════════════════════════════════════╗
+// ║  RADIAL BARS                             ║
+// ║  Classic radial frequency display with   ║
+// ║  a waveform ring and pulsing center.     ║
+// ╚═══════════════════════════════════════════╝
+
+function setup() {
+  createCanvas(W, H);
+  colorMode(HSB, 360, 100, 100, 100);
+}
+
+function draw() {
+  background(0, 0, 5, 20);
+  translate(width / 2, height / 2);
+
+  var bands = 90;
+  var step = floor(fft.length / bands);
+  for (var i = 0; i < bands; i++) {
+    var angle = map(i, 0, bands, 0, TWO_PI);
+    var amp = fft[i * step];
+    var r = map(amp, 0, 255, 40, min(width, height) * 0.45);
+    var hue = (frameCount + i * 4) % 360;
+
+    push();
+    rotate(angle);
+    strokeWeight(2.5);
+    stroke(hue, 80, 90, 70);
+    line(30, 0, r, 0);
+    pop();
+  }
+
+  noFill();
+  strokeWeight(1.5);
+  stroke(200, 60, 100, 50);
+  beginShape();
+  for (var j = 0; j < waveform.length; j += 4) {
+    var a = map(j, 0, waveform.length, 0, TWO_PI);
+    var rad = 80 + waveform[j] * 40;
+    vertex(cos(a) * rad, sin(a) * rad);
+  }
+  endShape(CLOSE);
+
+  var r2 = map(volume, 0, 0.5, 15, 50);
+  noStroke();
+  fill(180, 70, 95, 50);
+  circle(0, 0, r2 * 2);
+}
+`,
+
+
+  "Waveform Scope": `// ╔═══════════════════════════════════════════╗
+// ║  WAVEFORM SCOPE                          ║
+// ║  Oscilloscope waveform on top, frequency ║
+// ║  mountain fill below.                    ║
+// ╚═══════════════════════════════════════════╝
+
+function setup() {
+  createCanvas(W, H);
+}
+
+function draw() {
+  background(10, 12, 20);
+  stroke(0, 200, 255);
+  strokeWeight(2);
+  noFill();
+
+  beginShape();
+  for (var i = 0; i < waveform.length; i++) {
+    var x = map(i, 0, waveform.length, 0, width);
+    var y = map(waveform[i], -1, 1, height * 0.2, height * 0.8);
+    vertex(x, y);
+  }
+  endShape();
+
+  fill(0, 200, 255, 30);
+  beginShape();
+  vertex(0, height);
+  for (var j = 0; j < fft.length / 2; j++) {
+    var fx = map(j, 0, fft.length / 2, 0, width);
+    var fy = map(fft[j], 0, 255, height, height * 0.1);
+    vertex(fx, fy);
+  }
+  vertex(width, height);
+  endShape(CLOSE);
+}
+`,
+
+
+  "Mirror Bars": `// ╔═══════════════════════════════════════════╗
+// ║  MIRROR BARS                             ║
+// ║  Mirrored EQ bars around the center      ║
+// ║  with a volume-reactive divider line.    ║
+// ╚═══════════════════════════════════════════╝
+
+function setup() {
+  createCanvas(W, H);
+  colorMode(HSB, 360, 100, 100, 100);
+}
+
+function draw() {
+  background(0, 0, 8, 40);
+  var bars = 64;
+  var bw = width / bars;
+
+  for (var i = 0; i < bars; i++) {
+    var idx = floor(map(i, 0, bars, 0, fft.length / 2));
+    var amp = fft[idx];
+    var h = map(amp, 0, 255, 2, height / 2);
+    var hue = map(i, 0, bars, 180, 320);
+
+    noStroke();
+    fill(hue, 80, 90, 80);
+    rect(i * bw, height / 2 - h, bw - 1, h);
+    rect(i * bw, height / 2, bw - 1, h);
+  }
+
+  stroke(0, 0, 100, 60);
+  strokeWeight(map(volume, 0, 0.3, 1, 4));
+  line(0, height / 2, width, height / 2);
+}
+`,
+
+
+  "Particle Field": `// ╔═══════════════════════════════════════════╗
+// ║  PARTICLE FIELD                          ║
+// ║  200 particles buffeted by audio energy. ║
+// ║  Color shifts from cool to hot based on  ║
+// ║  each particle's frequency amplitude.    ║
+// ╚═══════════════════════════════════════════╝
+
+var particles = [];
+
+function setup() {
+  createCanvas(W, H);
+  for (var i = 0; i < 200; i++) {
+    particles.push({
+      x: random(W), y: random(H),
+      vx: 0, vy: 0,
+      size: random(2, 6)
+    });
+  }
+}
+
+function draw() {
+  background(0, 20);
+
+  var energy = volume * 10;
+  for (var i = 0; i < particles.length; i++) {
+    var pt = particles[i];
+    var fi = floor(map(i, 0, particles.length, 0, fft.length));
+    var amp = fft[fi] / 255;
+
+    pt.vx += random(-energy, energy);
+    pt.vy += random(-energy, energy);
+    pt.vx *= 0.92;
+    pt.vy *= 0.92;
+    pt.x += pt.vx;
+    pt.y += pt.vy;
+
+    if (pt.x < 0) pt.x = width;
+    if (pt.x > width) pt.x = 0;
+    if (pt.y < 0) pt.y = height;
+    if (pt.y > height) pt.y = 0;
+
+    var c = lerpColor(
+      color(30, 80, 255),
+      color(255, 50, 100),
+      amp
+    );
+    noStroke();
+    fill(red(c), green(c), blue(c), 180);
+    circle(pt.x, pt.y, pt.size + amp * 8);
+  }
+}
+`,
 };

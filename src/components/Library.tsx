@@ -22,16 +22,14 @@ function formatTime(time: number) {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
-interface SongRowProps {
-  index: number;
-  style: React.CSSProperties;
-  ariaAttributes?: Record<string, unknown>;
+interface SongRowExtraProps {
   songs: Song[];
   currentSongId?: string;
   onPlay: (song: Song) => void;
 }
 
-function SongRow({ index, style, songs, currentSongId, onPlay }: SongRowProps) {
+function SongRow(props: { ariaAttributes: { "aria-posinset": number; "aria-setsize": number; role: "listitem" }; index: number; style: React.CSSProperties } & SongRowExtraProps) {
+  const { index, style, songs, currentSongId, onPlay } = props;
   const song = songs[index];
   if (!song) return null;
 
@@ -50,10 +48,10 @@ function SongRow({ index, style, songs, currentSongId, onPlay }: SongRowProps) {
       onDoubleClick={() => onPlay(song)}
     >
       <div className="w-8 flex-shrink-0 text-gray-400 text-xs">{index + 1}</div>
-      <div className="flex-1 min-w-0 pr-4 truncate font-medium">{song.title}</div>
+      <div className="flex-1 min-w-[150px] pr-4 truncate font-medium">{song.title}</div>
+      <div className="flex-1 min-w-[120px] pr-4 truncate">{song.artist}</div>
       <div className="w-16 flex-shrink-0 text-right pr-4 tabular-nums">{formatTime(song.duration)}</div>
-      <div className="flex-1 min-w-0 pr-4 truncate">{song.artist}</div>
-      <div className="flex-1 min-w-0 pr-4 truncate">{song.album}</div>
+      <div className="flex-1 min-w-[120px] pr-4 truncate">{song.album}</div>
       <div className="w-24 flex-shrink-0 truncate">{song.genre || ''}</div>
       <div className="w-16 flex-shrink-0"></div>
     </div>
@@ -90,52 +88,51 @@ function SortHeader({
 }
 
 export function Library({ songs, sortColumn, sortDirection, onSort, onPlay, currentSongId, onRescan }: LibraryProps) {
-  const rowProps = useCallback(
-    () => ({ songs, currentSongId, onPlay }),
-    [songs, currentSongId, onPlay]
-  )();
+  const rowProps: SongRowExtraProps = { songs, currentSongId, onPlay };
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      {/* Table Header */}
-      <div className="flex items-center px-4 py-2 border-b border-gray-200 dark:border-gray-800 text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider bg-gray-50 dark:bg-[#1a1a1a]">
-        <div className="w-8 flex-shrink-0"></div>
-        <div className="flex-1 min-w-0 pr-4">
-          <SortHeader label="Name" column="title" currentColumn={sortColumn} direction={sortDirection} onSort={onSort} />
+    <div className="flex-1 flex flex-col overflow-x-auto bg-gray-50 dark:bg-[#1a1a1a]">
+      <div className="min-w-[660px] flex-1 flex flex-col min-h-0 bg-white dark:bg-[#121212]">
+        {/* Table Header */}
+        <div className="flex items-center px-4 py-2 border-b border-gray-200 dark:border-gray-800 text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider bg-gray-50 dark:bg-[#1a1a1a] shrink-0">
+          <div className="w-8 flex-shrink-0"></div>
+          <div className="flex-1 min-w-[150px] pr-4">
+            <SortHeader label="Name" column="title" currentColumn={sortColumn} direction={sortDirection} onSort={onSort} />
+          </div>
+          <div className="flex-1 min-w-[120px] pr-4">
+            <SortHeader label="Artist" column="artist" currentColumn={sortColumn} direction={sortDirection} onSort={onSort} />
+          </div>
+          <div className="w-16 flex-shrink-0 text-right pr-4">
+            <SortHeader label="Time" column="duration" currentColumn={sortColumn} direction={sortDirection} onSort={onSort} />
+          </div>
+          <div className="flex-1 min-w-[120px] pr-4">
+            <SortHeader label="Album" column="album" currentColumn={sortColumn} direction={sortDirection} onSort={onSort} />
+          </div>
+          <div className="w-24 flex-shrink-0">
+            <SortHeader label="Genre" column="genre" currentColumn={sortColumn} direction={sortDirection} onSort={onSort} />
+          </div>
+          <div className="w-16 flex-shrink-0 flex justify-end">
+            <button onClick={onRescan} className="hover:text-blue-500 transition-colors" title="Rescan Library">
+              <RefreshCw size={14} />
+            </button>
+          </div>
         </div>
-        <div className="w-16 flex-shrink-0 text-right pr-4">
-          <SortHeader label="Time" column="duration" currentColumn={sortColumn} direction={sortDirection} onSort={onSort} />
-        </div>
-        <div className="flex-1 min-w-0 pr-4">
-          <SortHeader label="Artist" column="artist" currentColumn={sortColumn} direction={sortDirection} onSort={onSort} />
-        </div>
-        <div className="flex-1 min-w-0 pr-4">
-          <SortHeader label="Album" column="album" currentColumn={sortColumn} direction={sortDirection} onSort={onSort} />
-        </div>
-        <div className="w-24 flex-shrink-0">
-          <SortHeader label="Genre" column="genre" currentColumn={sortColumn} direction={sortDirection} onSort={onSort} />
-        </div>
-        <div className="w-16 flex-shrink-0 flex justify-end">
-          <button onClick={onRescan} className="hover:text-blue-500 transition-colors" title="Rescan Library">
-            <RefreshCw size={14} />
-          </button>
-        </div>
-      </div>
 
-      {/* Virtualized Table Body */}
-      <div className="flex-1 overflow-hidden min-h-0">
-        {songs.length > 0 ? (
-          <List
-            rowComponent={SongRow}
-            rowCount={songs.length}
-            rowHeight={ROW_HEIGHT}
-            rowProps={rowProps}
-            overscanCount={20}
-            style={{ height: '100%' }}
-          />
-        ) : (
-          <div className="p-8 text-center text-gray-500">No songs found.</div>
-        )}
+        {/* Virtualized Table Body */}
+        <div className="flex-1 overflow-hidden min-h-0 bg-white dark:bg-[#121212]">
+          {songs.length > 0 ? (
+            <List
+              rowComponent={SongRow}
+              rowCount={songs.length}
+              rowHeight={ROW_HEIGHT}
+              rowProps={rowProps}
+              overscanCount={20}
+              style={{ height: '100%', width: '100%' }}
+            />
+          ) : (
+            <div className="p-8 text-center text-gray-500">No songs found.</div>
+          )}
+        </div>
       </div>
     </div>
   );

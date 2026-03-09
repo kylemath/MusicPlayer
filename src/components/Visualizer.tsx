@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Play as PlayIcon, AlertTriangle } from 'lucide-react';
+import { Play as PlayIcon, Zap } from 'lucide-react';
 import { DEFAULT_SKETCH, PRESET_SKETCHES } from '../lib/defaultSketches';
 import { CodeEditor } from './CodeEditor';
+import { ResizeHandle } from './ResizeHandle';
+import { MiniP5Preview } from './MiniP5Preview';
 
 declare const p5: any;
 
@@ -14,14 +16,6 @@ interface AudioData {
   waveform: Float32Array;
   volume: number;
 }
-
-const PRESET_PREVIEWS: Record<string, { gradient: string; label: string }> = {
-  'Synaptic Garden': { gradient: 'linear-gradient(135deg, #1a0a2e 0%, #4a1a6a 50%, #2d5a27 100%)', label: 'Neural growth' },
-  'Temporal Strata': { gradient: 'linear-gradient(180deg, #2c1810 0%, #4a3520 30%, #1e3a5f 100%)', label: 'Spectrum layers' },
-  'Phase Portrait': { gradient: 'linear-gradient(135deg, #0a0a12 0%, #1a3a5c 50%, #5c1a3a 100%)', label: 'Phase space' },
-  'Resonance Field': { gradient: 'linear-gradient(135deg, #0d1b0d 0%, #1a3d1a 50%, #0d2d3d 100%)', label: 'Wave interference' },
-  'Spectral Decomposition': { gradient: 'linear-gradient(135deg, #1a1a2e 0%, #2e1a4a 50%, #4a2e1a 100%)', label: 'Living Mondrian' },
-};
 
 export function Visualizer({ analyser }: VisualizerProps) {
   const canvasContainerRef = useRef<HTMLDivElement>(null);
@@ -36,6 +30,9 @@ export function Visualizer({ analyser }: VisualizerProps) {
   const [code, setCode] = useState(DEFAULT_SKETCH);
   const [error, setError] = useState<string | null>(null);
   const [selectedPresetName, setSelectedPresetName] = useState<string>('Synaptic Garden');
+  const [canvasHeight, setCanvasHeight] = useState(200);
+  const [catalogueHeight, setCatalogueHeight] = useState(192);
+  const [autorun, setAutorun] = useState(false);
 
   // Continuously read analyser data
   useEffect(() => {
@@ -146,6 +143,13 @@ export function Visualizer({ analyser }: VisualizerProps) {
     };
   }, []);
 
+  // Autorun: debounced run when code changes
+  useEffect(() => {
+    if (!autorun) return;
+    const timer = setTimeout(() => runSketch(code), 400);
+    return () => clearTimeout(timer);
+  }, [autorun, code, runSketch]);
+
   const handleRun = () => runSketch(code);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -175,12 +179,21 @@ export function Visualizer({ analyser }: VisualizerProps) {
     }
   };
 
+  const handleCanvasResize = useCallback((delta: number) => {
+    setCanvasHeight((h) => Math.max(120, Math.min(500, h + delta)));
+  }, []);
+
+  const handleCatalogueResize = useCallback((delta: number) => {
+    setCatalogueHeight((h) => Math.max(80, Math.min(400, h + delta)));
+  }, []);
+
   return (
-    <div className="flex flex-col h-full min-w-0">
-      {/* ── Canvas (fills top) ── */}
+    <div className="flex flex-col h-full min-w-0 bg-gray-50 dark:bg-[#121212]">
+      {/* ── Canvas (resizable height) ── */}
       <div
         ref={canvasContainerRef}
-        className="flex-1 min-h-0 relative overflow-hidden bg-black w-full"
+        className="shrink-0 relative overflow-hidden bg-black w-full rounded-3xl mx-2 mt-2"
+        style={{ height: canvasHeight }}
       >
         {!analyser && (
           <div className="absolute inset-0 flex items-center justify-center text-gray-600 text-sm z-10 pointer-events-none">
@@ -189,26 +202,26 @@ export function Visualizer({ analyser }: VisualizerProps) {
         )}
       </div>
 
+      <ResizeHandle onDrag={handleCanvasResize} vertical />
+
       {/* ── Card catalogue: preset selector with preview ── */}
-      <div className="shrink-0 px-2 py-2 bg-[#0d1117] border-t border-gray-800">
-        <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-thin" style={{ scrollbarWidth: 'thin' }}>
+      <div className="shrink-0 px-2 py-2 bg-gray-50 dark:bg-[#1a1a1a] border-y border-gray-200 dark:border-gray-800 shadow-inner min-h-0 overflow-hidden" style={{ maxHeight: catalogueHeight }}>
+        <div className="flex flex-wrap gap-2 overflow-y-auto overflow-x-hidden pb-1 scrollbar-thin" style={{ scrollbarWidth: 'thin', maxHeight: catalogueHeight - 16 }}>
           {Object.keys(PRESET_SKETCHES).map((name) => {
-            const preview = PRESET_PREVIEWS[name] ?? { gradient: 'linear-gradient(135deg, #1a1a2e, #2e2e4a)', label: name };
             const isSelected = selectedPresetName === name;
             return (
               <button
                 key={name}
                 type="button"
                 onClick={() => loadPreset(name)}
-                className={`shrink-0 w-24 rounded-lg overflow-hidden border-2 transition-all focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-[#0d1117] ${
-                  isSelected ? 'border-blue-500 ring-2 ring-blue-500/30' : 'border-gray-700 hover:border-gray-500'
+                className={`shrink-0 w-28 rounded-lg overflow-hidden border transition-all focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-[#1a1a1a] shadow-sm bg-white dark:bg-black ${
+                  isSelected ? 'border-blue-500 ring-1 ring-blue-500/50' : 'border-gray-300 dark:border-gray-700 hover:border-gray-400 dark:hover:border-gray-500'
                 }`}
               >
-                <div
-                  className="h-14 w-full"
-                  style={{ background: preview.gradient }}
-                />
-                <div className="px-1.5 py-1 bg-[#161b22] text-[10px] font-medium text-gray-300 truncate text-center">
+                <div className="h-16 w-full relative bg-black">
+                  <MiniP5Preview sketchCode={PRESET_SKETCHES[name]!} audioDataRef={audioDataRef} />
+                </div>
+                <div className="px-1.5 py-1 bg-white dark:bg-[#161b22] text-[10px] font-medium text-gray-700 dark:text-gray-300 truncate text-center border-t border-gray-100 dark:border-gray-800">
                   {name}
                 </div>
               </button>
@@ -217,30 +230,50 @@ export function Visualizer({ analyser }: VisualizerProps) {
         </div>
       </div>
 
-      {/* ── Lower pill: editable code boundary ── */}
-      <div className="shrink-0 px-3 pb-3">
-        <div className="rounded-[2rem] overflow-hidden bg-[#0d1117] border border-gray-800 shadow-lg flex flex-col min-h-0" style={{ maxHeight: '220px' }}>
-          <div className="flex items-center gap-2 px-3 py-1.5 bg-[#161b22] border-b border-gray-800 shrink-0">
-            <button
-              onClick={handleRun}
-              className="flex items-center gap-1 px-2 py-0.5 bg-green-700 hover:bg-green-600 text-white text-xs rounded transition"
-              title="Run (Cmd+Enter)"
-            >
-              <PlayIcon size={12} /> Run
-            </button>
-            {error && (
-              <div className="flex items-center gap-1 text-red-400 text-xs truncate max-w-[200px]" title={error}>
-                <AlertTriangle size={12} /> {error}
-              </div>
-            )}
-          </div>
-          <div className="flex-1 min-h-0 overflow-hidden" style={{ height: '140px' }}>
-            <CodeEditor
-              value={code}
-              onChange={setCode}
-              onKeyDown={handleKeyDown}
+      <ResizeHandle onDrag={handleCatalogueResize} vertical />
+
+      {/* ── Lower section: editable code boundary ── */}
+      <div className="flex-1 flex flex-col min-h-0 bg-gray-50 dark:bg-[#121212]">
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-100 dark:bg-[#1a1a1a] border-b border-gray-200 dark:border-gray-800 shrink-0 shadow-sm z-10">
+          <button
+            onClick={handleRun}
+            className="flex items-center gap-1 px-2 py-0.5 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 text-xs rounded transition shadow-sm"
+            title="Run (Cmd+Enter)"
+          >
+            <PlayIcon size={12} className="text-green-600 dark:text-green-400" /> Run
+          </button>
+          <label className="flex items-center gap-1.5 cursor-pointer select-none text-xs text-gray-600 dark:text-gray-400">
+            <input
+              type="checkbox"
+              checked={autorun}
+              onChange={(e) => setAutorun(e.target.checked)}
+              className="rounded border-gray-400 dark:border-gray-500"
             />
-          </div>
+            <Zap size={12} className="text-amber-500" />
+            <span>Autorun</span>
+          </label>
+          {error ? (
+            <div className="flex items-center gap-2 flex-1 min-w-0" title={error}>
+              <div className="error-dance shrink-0" aria-hidden>
+                <svg viewBox="0 0 64 64" className="w-8 h-8 text-red-500 dark:text-red-400">
+                  <circle cx="32" cy="32" r="26" fill="none" stroke="currentColor" strokeWidth="2" />
+                  <path d="M 22 26 L 26 30 M 26 26 L 22 30" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  <path d="M 38 26 L 42 30 M 42 26 L 38 30" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  <path d="M 20 44 Q 32 52 44 44" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" />
+                  <ellipse cx="28" cy="18" rx="3" ry="4" fill="currentColor" opacity="0.6" />
+                  <ellipse cx="36" cy="18" rx="3" ry="4" fill="currentColor" opacity="0.6" />
+                </svg>
+              </div>
+              <span className="text-red-500 dark:text-red-400 text-xs truncate">{error}</span>
+            </div>
+          ) : null}
+        </div>
+        <div className="flex-1 min-h-0 flex flex-col">
+          <CodeEditor
+            value={code}
+            onChange={setCode}
+            onKeyDown={handleKeyDown}
+          />
         </div>
       </div>
     </div>

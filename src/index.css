@@ -19,18 +19,18 @@ body {
   }
 }
 
-/* ─── Syntax highlighting tokens ────────────── */
-.hl-keyword  { color: #ff7b72; }
-.hl-literal  { color: #79c0ff; }
-.hl-number   { color: #f0883e; }
-.hl-string   { color: #a5d6ff; }
-.hl-comment  { color: #6a737d; font-style: italic; }
-.hl-fn       { color: #d2a8ff; }
-.hl-defname  { color: #d2a8ff; font-weight: 600; }
-.hl-audio    { color: #7ee787; font-weight: 600; }
-.hl-constant { color: #79c0ff; }
-.hl-op       { color: #c9d1d9; }
-.hl-bracket  { color: #8b949e; }
+/* ─── Syntax highlighting tokens (light theme) ── */
+.hl-keyword  { color: #cf222e; }
+.hl-literal  { color: #0550ae; }
+.hl-number   { color: #0550ae; }
+.hl-string   { color: #0a3069; }
+.hl-comment  { color: #6e7781; font-style: italic; }
+.hl-fn       { color: #8250df; }
+.hl-defname  { color: #8250df; font-weight: 600; }
+.hl-audio    { color: #116329; font-weight: 600; }
+.hl-constant { color: #0550ae; }
+.hl-op       { color: #24292f; }
+.hl-bracket  { color: #57606a; }
 
 /* ─── EQ vertical sliders ─────────────────── */
 .eq-slider {
@@ -62,4 +62,15 @@ body {
   background: linear-gradient(to top, #334155, #475569);
   border-radius: 4px;
   width: 4px;
+}
+
+/* ─── Dancing error graphic ───────────────── */
+@keyframes error-dance-bounce {
+  0%, 100% { transform: translateY(0) rotate(-3deg) scale(1); }
+  25% { transform: translateY(-4px) rotate(3deg) scale(1.05); }
+  50% { transform: translateY(0) rotate(-2deg) scale(0.98); }
+  75% { transform: translateY(-2px) rotate(4deg) scale(1.02); }
+}
+.error-dance {
+  animation: error-dance-bounce 0.6s ease-in-out infinite;
 }

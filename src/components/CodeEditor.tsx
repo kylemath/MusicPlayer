@@ -41,7 +41,7 @@ export function CodeEditor({ value, onChange, onKeyDown }: CodeEditorProps) {
   };
 
   return (
-    <div className="code-editor relative flex-1 min-h-0 overflow-hidden bg-[#0d1117]">
+    <div className="code-editor relative w-full h-full min-h-0 flex-1 overflow-hidden bg-white">
       {/* Highlighted layer behind */}
       <pre
         ref={preRef}
@@ -62,10 +62,10 @@ export function CodeEditor({ value, onChange, onKeyDown }: CodeEditorProps) {
         spellCheck={false}
         autoCapitalize="off"
         autoCorrect="off"
-        className="absolute inset-0 w-full h-full bg-transparent text-transparent caret-[#58a6ff] resize-none outline-none"
+        className="absolute inset-0 w-full h-full bg-transparent text-transparent resize-none outline-none"
         style={{
           ...sharedStyle,
-          caretColor: '#58a6ff',
+          caretColor: '#1a1a1a',
           color: 'transparent',
         }}
         placeholder="Write your p5.js sketch here..."

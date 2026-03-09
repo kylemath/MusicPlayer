@@ -227,11 +227,11 @@ function App() {
 
   // ─── Resize handlers ────────────────────────────────
   const handleSidebarDrag = useCallback((delta: number) => {
-    setSidebarW(w => clamp(w + delta, 140, 400));
+    setSidebarW(w => clamp(w + delta, 140, 600));
   }, []);
 
   const handleLibraryVizDrag = useCallback((delta: number) => {
-    setVizPanelW(w => clamp(w - delta, 320, 900));
+    setVizPanelW(w => Math.max(200, w - delta));
   }, []);
 
   // ─── Welcome screen ────────────────────────────────
@@ -301,7 +301,7 @@ function App() {
         <ResizeHandle onDrag={handleSidebarDrag} />
 
         {/* ── Library ── */}
-        <div className="flex-1 flex flex-col relative bg-white dark:bg-[#121212] min-w-[200px] h-full">
+        <div className="flex-1 flex flex-col relative bg-white dark:bg-[#121212] min-w-[50px] h-full overflow-hidden">
           {loading && (
             <div className="absolute inset-0 z-10 bg-white/80 dark:bg-black/80 flex flex-col items-center justify-center backdrop-blur-sm">
               <Loader2 className="w-10 h-10 animate-spin text-blue-500 mb-4" />
