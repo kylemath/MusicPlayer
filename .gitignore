@@ -25,3 +25,9 @@ dist-ssr
 
 # Files added by git-init-repo script
 node_modules/.package-lock.json
+
+# App build artifacts
+build/
+dev-dist/
+.localplayer.log
+favicon.ico

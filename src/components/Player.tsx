@@ -66,7 +66,7 @@ export function Player({
 
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [volume, setVolume] = useState(0.8);
+  const [volume, setVolume] = useState(0.25);
   const [muted, setMuted] = useState(false);
   const [playlistMenuOpen, setPlaylistMenuOpen] = useState(false);
   const [newPlaylistName, setNewPlaylistName] = useState('');
