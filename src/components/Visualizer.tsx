@@ -15,6 +15,7 @@ interface AudioData {
   fft: Uint8Array;
   waveform: Float32Array;
   volume: number;
+  bpm: number;
 }
 
 export function Visualizer({ analyser }: VisualizerProps) {
@@ -24,8 +25,15 @@ export function Visualizer({ analyser }: VisualizerProps) {
     fft: new Uint8Array(1024),
     waveform: new Float32Array(1024),
     volume: 0,
+    bpm: 120,
   });
   const rafRef = useRef<number>(0);
+
+  // BPM detection state
+  const kickOnsetTimesRef  = useRef<number[]>([]);
+  const prevKickEnergyRef  = useRef<number>(0);
+  const lastOnsetTimeRef   = useRef<number>(0);
+  const detectedBpmRef     = useRef<number>(120);
 
   const [code, setCode] = useState(DEFAULT_SKETCH);
   const [error, setError] = useState<string | null>(null);
@@ -47,8 +55,61 @@ export function Visualizer({ analyser }: VisualizerProps) {
 
       let sum = 0;
       for (let i = 0; i < wavBuf.length; i++) sum += wavBuf[i] * wavBuf[i];
+      const volume = Math.sqrt(sum / wavBuf.length);
 
-      audioDataRef.current = { fft: fftBuf, waveform: wavBuf, volume: Math.sqrt(sum / wavBuf.length) };
+      // ── Kick-drum onset detection for BPM ──────────────────────────────
+      // Use low FFT bins (~20–180 Hz) where kick drum energy lives.
+      const KICK_LO = 1, KICK_HI = Math.min(8, fftBuf.length - 1);
+      let kickSum = 0;
+      for (let i = KICK_LO; i <= KICK_HI; i++) kickSum += fftBuf[i];
+      const kickE = kickSum / (KICK_HI - KICK_LO + 1) / 255; // 0..1
+
+      const now = performance.now();
+      const isOnset =
+        kickE > 0.07 &&                              // absolute floor (ignore silence)
+        kickE > prevKickEnergyRef.current * 1.35 &&  // energy jumped ≥35%
+        now - lastOnsetTimeRef.current > 215;        // min 215 ms gap (~280 BPM ceiling)
+
+      if (isOnset) {
+        lastOnsetTimeRef.current = now;
+        const onsets = kickOnsetTimesRef.current;
+        onsets.push(now);
+        if (onsets.length > 16) onsets.shift();
+
+        // IOI histogram: bucket all pairwise intervals into ~5-BPM-wide bins
+        if (onsets.length >= 4) {
+          const buckets: Record<number, number> = {};
+          for (let i = 0; i < onsets.length; i++) {
+            for (let j = i + 1; j < onsets.length; j++) {
+              const gap = onsets[j] - onsets[i];
+              if (gap < 215 || gap > 3000) continue;
+              let candidate = 60000 / gap;
+              // Fold into 70–180 BPM range
+              while (candidate < 70)  candidate *= 2;
+              while (candidate > 180) candidate /= 2;
+              const bin = Math.round(candidate / 5) * 5;
+              buckets[bin] = (buckets[bin] || 0) + 1;
+            }
+          }
+          // Pick the highest-vote bin
+          let bestBpm = detectedBpmRef.current, bestVotes = 0;
+          for (const key of Object.keys(buckets)) {
+            const votes = buckets[+key];
+            if (votes > bestVotes) { bestVotes = votes; bestBpm = +key; }
+          }
+          // Exponential moving average to smooth jitter
+          detectedBpmRef.current = detectedBpmRef.current * 0.82 + bestBpm * 0.18;
+        }
+      }
+      prevKickEnergyRef.current = kickE;
+      // ───────────────────────────────────────────────────────────────────
+
+      audioDataRef.current = {
+        fft: fftBuf,
+        waveform: wavBuf,
+        volume,
+        bpm: detectedBpmRef.current,
+      };
       rafRef.current = requestAnimationFrame(tick);
     }
 
@@ -87,9 +148,10 @@ export function Visualizer({ analyser }: VisualizerProps) {
       const sketch = (p: any) => {
         const scopeProxy = new Proxy(p, {
           get(_target, prop: string) {
-            if (prop === 'fft') return audioDataRef.current.fft;
+            if (prop === 'fft')      return audioDataRef.current.fft;
             if (prop === 'waveform') return audioDataRef.current.waveform;
-            if (prop === 'volume') return audioDataRef.current.volume;
+            if (prop === 'volume')   return audioDataRef.current.volume;
+            if (prop === 'bpm')      return audioDataRef.current.bpm;
             if (prop === 'W') return W;
             if (prop === 'H') return H;
 
@@ -98,7 +160,7 @@ export function Visualizer({ analyser }: VisualizerProps) {
             return val;
           },
           has(_target, prop: string) {
-            if (['fft', 'waveform', 'volume', 'W', 'H'].includes(prop)) return true;
+            if (['fft', 'waveform', 'volume', 'bpm', 'W', 'H'].includes(prop)) return true;
             return prop in p;
           },
         });

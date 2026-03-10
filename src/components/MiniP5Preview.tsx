@@ -29,9 +29,10 @@ export function MiniP5Preview({ sketchCode, audioDataRef }: MiniP5PreviewProps) 
       const sketch = (p: any) => {
         const scopeProxy = new Proxy(p, {
           get(_target, prop: string) {
-            if (prop === 'fft') return audioDataRef.current.fft;
+            if (prop === 'fft')      return audioDataRef.current.fft;
             if (prop === 'waveform') return audioDataRef.current.waveform;
-            if (prop === 'volume') return audioDataRef.current.volume;
+            if (prop === 'volume')   return audioDataRef.current.volume;
+            if (prop === 'bpm')      return audioDataRef.current.bpm ?? 120;
             if (prop === 'W') return W;
             if (prop === 'H') return H;
 
@@ -40,7 +41,7 @@ export function MiniP5Preview({ sketchCode, audioDataRef }: MiniP5PreviewProps) 
             return val;
           },
           has(_target, prop: string) {
-            if (['fft', 'waveform', 'volume', 'W', 'H'].includes(prop)) return true;
+            if (['fft', 'waveform', 'volume', 'bpm', 'W', 'H'].includes(prop)) return true;
             return prop in p;
           },
         });
