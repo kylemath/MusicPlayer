@@ -9,6 +9,8 @@ declare const p5: any;
 
 interface VisualizerProps {
   analyser: AnalyserNode | null;
+  isMaximized?: boolean;
+  onMaximizeToggle?: () => void;
 }
 
 interface AudioData {
@@ -18,7 +20,7 @@ interface AudioData {
   bpm: number;
 }
 
-export function Visualizer({ analyser }: VisualizerProps) {
+export function Visualizer({ analyser, isMaximized = false, onMaximizeToggle }: VisualizerProps) {
   const visualizerRef = useRef<HTMLDivElement>(null);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const p5InstanceRef = useRef<any>(null);
@@ -37,12 +39,13 @@ export function Visualizer({ analyser }: VisualizerProps) {
   const detectedBpmRef     = useRef<number>(120);
 
   const [code, setCode] = useState(DEFAULT_SKETCH);
+  const codeRef = useRef(code);
+  codeRef.current = code;
   const [error, setError] = useState<string | null>(null);
   const [selectedPresetName, setSelectedPresetName] = useState<string>('Synaptic Garden');
   const [canvasHeight, setCanvasHeight] = useState(200);
   const [catalogueHeight, setCatalogueHeight] = useState(192);
   const [autorun, setAutorun] = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(false);
 
   // Continuously read analyser data
   useEffect(() => {
@@ -198,11 +201,18 @@ export function Visualizer({ analyser }: VisualizerProps) {
     }
   }, [destroySketch]);
 
-  // Run sketch on mount
+  // Run sketch on mount and when container resizes (e.g. fullscreen)
   useEffect(() => {
+    const container = canvasContainerRef.current;
+    if (!container) return;
     const timer = setTimeout(() => runSketch(code), 200);
+    const ro = new ResizeObserver(() => {
+      runSketch(codeRef.current);
+    });
+    ro.observe(container);
     return () => {
       clearTimeout(timer);
+      ro.disconnect();
       destroySketch();
     };
   }, []);
@@ -251,32 +261,6 @@ export function Visualizer({ analyser }: VisualizerProps) {
     setCatalogueHeight((h) => Math.max(80, Math.min(400, h + delta)));
   }, []);
 
-  useEffect(() => {
-    const syncFullscreen = () => {
-      setIsFullscreen(document.fullscreenElement === visualizerRef.current);
-    };
-
-    document.addEventListener('fullscreenchange', syncFullscreen);
-    syncFullscreen();
-
-    return () => document.removeEventListener('fullscreenchange', syncFullscreen);
-  }, []);
-
-  const toggleFullscreen = useCallback(async () => {
-    try {
-      if (document.fullscreenElement === visualizerRef.current) {
-        await document.exitFullscreen();
-        return;
-      }
-
-      if (visualizerRef.current) {
-        await visualizerRef.current.requestFullscreen();
-      }
-    } catch (error) {
-      console.error('Failed to toggle fullscreen visualizer', error);
-    }
-  }, []);
-
   return (
     <div ref={visualizerRef} className="flex flex-col h-full min-w-0 bg-gray-50 dark:bg-[#121212]">
       <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-[#1a1a1a]">
@@ -285,19 +269,19 @@ export function Visualizer({ analyser }: VisualizerProps) {
         </div>
         <button
           type="button"
-          onClick={toggleFullscreen}
+          onClick={onMaximizeToggle ?? (() => {})}
           className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors"
-          title={isFullscreen ? 'Exit Fullscreen' : 'Open Fullscreen'}
+          title={isMaximized ? 'Restore' : 'Maximize'}
         >
-          {isFullscreen ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
-          {isFullscreen ? 'Windowed' : 'Fullscreen'}
+          {isMaximized ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
+          {isMaximized ? 'Restore' : 'Maximize'}
         </button>
       </div>
-      {/* ── Canvas (resizable height) ── */}
+      {/* ── Canvas (resizable height when windowed; fills space when fullscreen) ── */}
       <div
         ref={canvasContainerRef}
-        className="shrink-0 relative overflow-hidden bg-black w-full rounded-3xl mx-2 mt-2"
-        style={{ height: canvasHeight }}
+        className={`relative overflow-hidden bg-black w-full ${isMaximized ? 'flex-1 min-h-0 mx-2 mt-2 mb-2 rounded-3xl' : 'shrink-0 rounded-3xl mx-2 mt-2'}`}
+        style={isMaximized ? undefined : { height: canvasHeight }}
       >
         {!analyser && (
           <div className="absolute inset-0 flex items-center justify-center text-gray-600 text-sm z-10 pointer-events-none">
@@ -306,9 +290,10 @@ export function Visualizer({ analyser }: VisualizerProps) {
         )}
       </div>
 
-      <ResizeHandle onDrag={handleCanvasResize} vertical />
+      {!isMaximized && <ResizeHandle onDrag={handleCanvasResize} vertical />}
 
-      {/* ── Card catalogue: preset selector with preview ── */}
+      {/* ── Card catalogue: preset selector with preview (hidden when maximized) ── */}
+      {!isMaximized && (
       <div className="shrink-0 px-2 py-2 bg-gray-50 dark:bg-[#1a1a1a] border-y border-gray-200 dark:border-gray-800 shadow-inner min-h-0 overflow-hidden" style={{ maxHeight: catalogueHeight }}>
         <div className="flex flex-wrap gap-2 overflow-y-auto overflow-x-hidden pb-1 scrollbar-thin" style={{ scrollbarWidth: 'thin', maxHeight: catalogueHeight - 16 }}>
           {Object.keys(PRESET_SKETCHES).map((name) => {
@@ -333,10 +318,12 @@ export function Visualizer({ analyser }: VisualizerProps) {
           })}
         </div>
       </div>
+      )}
 
-      <ResizeHandle onDrag={handleCatalogueResize} vertical />
+      {!isMaximized && <ResizeHandle onDrag={handleCatalogueResize} vertical />}
 
-      {/* ── Lower section: editable code boundary ── */}
+      {/* ── Lower section: editable code boundary (hidden when maximized) ── */}
+      {!isMaximized && (
       <div className="flex-1 flex flex-col min-h-0 bg-gray-50 dark:bg-[#121212]">
         <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-100 dark:bg-[#1a1a1a] border-b border-gray-200 dark:border-gray-800 shrink-0 shadow-sm z-10">
           <button
@@ -380,6 +367,7 @@ export function Visualizer({ analyser }: VisualizerProps) {
           />
         </div>
       </div>
+      )}
     </div>
   );
 }

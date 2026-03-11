@@ -62,6 +62,7 @@ function App() {
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
   const [showVisualizer, setShowVisualizer] = useState(true);
   const [showSongDetails, setShowSongDetails] = useState(false);
+  const [isVizMaximized, setIsVizMaximized] = useState(false);
 
   const seekRef = useRef<((time: number) => void) | null>(null);
 
@@ -529,6 +530,8 @@ function App() {
 
   const handleAnalyserReady = useCallback((node: AnalyserNode) => setAnalyser(node), []);
 
+  const toggleVizMaximized = useCallback(() => setIsVizMaximized((v) => !v), []);
+
   // ─── Resize handlers ────────────────────────────────
   const handleSidebarDrag = useCallback((delta: number) => {
     setSidebarW(w => clamp(w + delta, 140, 600));
@@ -598,8 +601,9 @@ function App() {
         onSongDetailsToggle={() => setShowSongDetails(v => !v)}
       />
 
-      <div className="flex flex-1 overflow-hidden">
-        {/* ── Sidebar ── */}
+      <div className={`flex flex-1 overflow-hidden ${isVizMaximized ? 'flex-col' : ''}`}>
+        {/* ── Sidebar (hidden when viz maximized) ── */}
+        {!isVizMaximized && (
         <div className="shrink-0 h-full border-r border-gray-300 dark:border-gray-800 flex flex-col" style={{ width: sidebarW }}>
           <Sidebar
             songs={songs}
@@ -624,10 +628,12 @@ function App() {
             onPlaylistsChange={setPlaylists}
           />
         </div>
+        )}
 
-        <ResizeHandle onDrag={handleSidebarDrag} />
+        {!isVizMaximized && <ResizeHandle onDrag={handleSidebarDrag} />}
 
-        {/* ── Library ── */}
+        {/* ── Library (hidden when viz maximized) ── */}
+        {!isVizMaximized && (
         <div className="flex-1 flex flex-col relative bg-white dark:bg-[#121212] min-w-[50px] h-full overflow-hidden">
           {loading && (
             <div className="absolute inset-0 z-10 bg-white/80 dark:bg-black/80 flex flex-col items-center justify-center backdrop-blur-sm">
@@ -671,9 +677,10 @@ function App() {
             onRescan={() => doScan(dirHandle)}
           />
         </div>
+        )}
 
-        {/* ── Song Details pane ── */}
-        {showSongDetails && displaySong && (
+        {/* ── Song Details pane (hidden when viz maximized) ── */}
+        {!isVizMaximized && showSongDetails && displaySong && (
           <>
             <ResizeHandle onDrag={handleDetailsPanelDrag} />
             <div className="shrink-0 h-full" style={{ width: detailsPanelW }}>
@@ -705,9 +712,16 @@ function App() {
         {/* ── Visualizer ── */}
         {showVisualizer && (
           <>
-            <ResizeHandle onDrag={handleLibraryVizDrag} />
-            <div className="shrink-0 h-full flex flex-col" style={{ width: vizPanelW }}>
-              <Visualizer analyser={analyser} />
+            {!isVizMaximized && <ResizeHandle onDrag={handleLibraryVizDrag} />}
+            <div
+              className={`h-full flex flex-col ${isVizMaximized ? 'flex-1 min-w-0' : 'shrink-0'}`}
+              style={isVizMaximized ? undefined : { width: vizPanelW }}
+            >
+              <Visualizer
+                analyser={analyser}
+                isMaximized={isVizMaximized}
+                onMaximizeToggle={toggleVizMaximized}
+              />
             </div>
           </>
         )}
