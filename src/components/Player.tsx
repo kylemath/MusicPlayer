@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import type { Song } from '../types';
+import type { PlayHistoryEntry, Song } from '../types';
 import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Shuffle, ListPlus, SlidersHorizontal } from 'lucide-react';
 
 interface PlaylistItem {
@@ -20,27 +20,35 @@ interface PlayerProps {
   playlists?: PlaylistItem[];
   onAddToPlaylist?: (songId: string, playlistId: string) => void;
   onCreatePlaylistAndAdd?: (songId: string, name: string) => void;
+  onTrackSessionComplete?: (entry: Omit<PlayHistoryEntry, 'id'>) => void;
+  onArtistClick?: (artist: string) => void;
+  onAlbumClick?: (album: string) => void;
+  // NowPlaying pane wiring
+  seekRef?: React.MutableRefObject<((time: number) => void) | null>;
+  onTimeUpdate?: (currentTime: number, duration: number) => void;
+  showNowPlaying?: boolean;
+  onNowPlayingToggle?: () => void;
 }
 
 // ─── EQ definitions ──────────────────────────────────
 const EQ_BANDS = [
-  { freq: 60,   label: '60'  },
-  { freq: 170,  label: '170' },
-  { freq: 350,  label: '350' },
-  { freq: 1000, label: '1K'  },
-  { freq: 3500, label: '3.5K'},
-  { freq: 10000,label: '10K' },
+  { freq: 60,    label: '60'   },
+  { freq: 170,   label: '170'  },
+  { freq: 350,   label: '350'  },
+  { freq: 1000,  label: '1K'   },
+  { freq: 3500,  label: '3.5K' },
+  { freq: 10000, label: '10K'  },
 ] as const;
 
-type EqGains = number[]; // one per band, in dB (-12 to +12)
+type EqGains = number[];
 
 const EQ_PRESETS: Record<string, EqGains> = {
-  Flat:    [0,  0,  0,  0,  0,  0],
-  Loud:    [6,  4,  0, -1,  3,  5],
-  Quiet:   [-2, 0,  3,  4,  2, -1],
-  Bass:    [8,  5,  1,  0,  0,  0],
-  Treble:  [0,  0,  0,  1,  4,  7],
-  Vocal:   [-2, 0,  3,  5,  3,  0],
+  Flat:   [0,  0,  0,  0,  0,  0],
+  Loud:   [6,  4,  0, -1,  3,  5],
+  Quiet:  [-2, 0,  3,  4,  2, -1],
+  Bass:   [8,  5,  1,  0,  0,  0],
+  Treble: [0,  0,  0,  1,  4,  7],
+  Vocal:  [-2, 0,  3,  5,  3,  0],
 };
 
 export function Player({
@@ -55,109 +63,110 @@ export function Player({
   playlists = [],
   onAddToPlaylist,
   onCreatePlaylistAndAdd,
+  onTrackSessionComplete,
+  onArtistClick,
+  onAlbumClick,
+  seekRef,
+  onTimeUpdate,
+  showNowPlaying,
+  onNowPlayingToggle,
 }: PlayerProps) {
-  const audioRef = useRef<HTMLAudioElement>(null);
+  const audioRef    = useRef<HTMLAudioElement>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
-  const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const sourceRef   = useRef<MediaElementAudioSourceNode | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const eqFiltersRef = useRef<BiquadFilterNode[]>([]);
   const menuRef = useRef<HTMLDivElement>(null);
-  const eqRef = useRef<HTMLDivElement>(null);
+  const eqRef   = useRef<HTMLDivElement>(null);
+
+  const currentTimeRef = useRef(0);
+  const durationRef    = useRef(0);
+  const lastNotifyRef  = useRef(0);
+  const activeSessionRef = useRef<{
+    songId: string; playedAt: number; songDuration: number; reported: boolean;
+  } | null>(null);
 
   const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [volume, setVolume] = useState(0.25);
-  const [muted, setMuted] = useState(false);
+  const [duration,    setDuration]    = useState(0);
+  const [volume,  setVolume]  = useState(0.25);
+  const [muted,   setMuted]   = useState(false);
   const [playlistMenuOpen, setPlaylistMenuOpen] = useState(false);
-  const [newPlaylistName, setNewPlaylistName] = useState('');
-
-  const [eqOpen, setEqOpen] = useState(false);
-  const [eqGains, setEqGains] = useState<EqGains>([...EQ_PRESETS.Flat]);
+  const [newPlaylistName,  setNewPlaylistName]  = useState('');
+  const [eqOpen,   setEqOpen]   = useState(false);
+  const [eqGains,  setEqGains]  = useState<EqGains>([...EQ_PRESETS.Flat]);
   const [eqPreset, setEqPreset] = useState('Flat');
 
+  // ── Expose seek to parent via seekRef ──────────────────────────────────────
+  useEffect(() => {
+    if (!seekRef) return;
+    seekRef.current = (time: number) => {
+      if (audioRef.current) {
+        audioRef.current.currentTime = time;
+        setCurrentTime(time);
+        currentTimeRef.current = time;
+      }
+    };
+    return () => { if (seekRef) seekRef.current = null; };
+  }, [seekRef]);
+
+  // ── Audio context + EQ chain ───────────────────────────────────────────────
   const ensureAudioContext = useCallback(() => {
     if (audioCtxRef.current || !audioRef.current) return;
-
     const ctx = new AudioContext();
     audioCtxRef.current = ctx;
-
     const source = ctx.createMediaElementSource(audioRef.current);
     sourceRef.current = source;
 
-    // Build EQ filter chain: source -> [filters] -> analyser -> destination
     const filters = EQ_BANDS.map((band, i) => {
-      const filter = ctx.createBiquadFilter();
-      filter.type = i === 0 ? 'lowshelf' : i === EQ_BANDS.length - 1 ? 'highshelf' : 'peaking';
-      filter.frequency.value = band.freq;
-      filter.Q.value = 1.0;
-      filter.gain.value = eqGains[i];
-      return filter;
+      const f = ctx.createBiquadFilter();
+      f.type = i === 0 ? 'lowshelf' : i === EQ_BANDS.length - 1 ? 'highshelf' : 'peaking';
+      f.frequency.value = band.freq;
+      f.Q.value = 1.0;
+      f.gain.value = eqGains[i];
+      return f;
     });
     eqFiltersRef.current = filters;
 
-    // Chain: source -> f0 -> f1 -> ... -> fN -> analyser -> dest
     let prev: AudioNode = source;
-    for (const f of filters) {
-      prev.connect(f);
-      prev = f;
-    }
+    for (const f of filters) { prev.connect(f); prev = f; }
 
     const analyser = ctx.createAnalyser();
     analyser.fftSize = 2048;
     analyserRef.current = analyser;
-
     prev.connect(analyser);
     analyser.connect(ctx.destination);
-
     onAnalyserReady?.(analyser);
   }, [onAnalyserReady]);
 
-  // Sync EQ gains to filter nodes whenever they change
   useEffect(() => {
     eqFiltersRef.current.forEach((f, i) => {
-      if (eqGains[i] !== undefined) {
-        f.gain.value = eqGains[i];
-      }
+      if (eqGains[i] !== undefined) f.gain.value = eqGains[i];
     });
   }, [eqGains]);
 
   useEffect(() => {
     if (currentSong && audioRef.current) {
       ensureAudioContext();
-
       const loadAudio = async () => {
         try {
           const file = await currentSong.fileHandle.getFile();
           const url = URL.createObjectURL(file);
           audioRef.current!.src = url;
           audioRef.current!.volume = volume;
-          if (audioCtxRef.current?.state === 'suspended') {
-            audioCtxRef.current.resume();
-          }
-          if (isPlaying) {
-            audioRef.current!.play().catch(e => console.error(e));
-          }
-        } catch (e) {
-          console.error("Failed to load audio file", e);
-        }
+          if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume();
+          if (isPlaying) audioRef.current!.play().catch(console.error);
+        } catch (e) { console.error('Failed to load audio', e); }
       };
       loadAudio();
-
-      return () => {
-        if (audioRef.current && audioRef.current.src) {
-          URL.revokeObjectURL(audioRef.current.src);
-        }
-      };
+      return () => { if (audioRef.current?.src) URL.revokeObjectURL(audioRef.current.src); };
     }
   }, [currentSong]);
 
   useEffect(() => {
     if (audioRef.current) {
       if (isPlaying) {
-        if (audioCtxRef.current?.state === 'suspended') {
-          audioCtxRef.current.resume();
-        }
-        audioRef.current.play().catch(e => console.error(e));
+        if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume();
+        audioRef.current.play().catch(console.error);
       } else {
         audioRef.current.pause();
       }
@@ -165,48 +174,93 @@ export function Player({
   }, [isPlaying]);
 
   useEffect(() => {
-    if (audioRef.current) {
-      audioRef.current.volume = muted ? 0 : volume;
-    }
+    if (audioRef.current) audioRef.current.volume = muted ? 0 : volume;
   }, [volume, muted]);
 
+  // ── Playback event handlers ────────────────────────────────────────────────
   const handleTimeUpdate = () => {
-    if (audioRef.current) {
-      setCurrentTime(audioRef.current.currentTime);
+    if (!audioRef.current) return;
+    const t = audioRef.current.currentTime;
+    currentTimeRef.current = t;
+    setCurrentTime(t);
+    // Throttle parent notifications to ~2 Hz to avoid expensive App re-renders
+    const now = Date.now();
+    if (now - lastNotifyRef.current > 500) {
+      lastNotifyRef.current = now;
+      onTimeUpdate?.(t, durationRef.current);
     }
   };
 
   const handleLoadedMetadata = () => {
-    if (audioRef.current) {
-      setDuration(audioRef.current.duration);
-    }
+    if (!audioRef.current) return;
+    const d = audioRef.current.duration;
+    durationRef.current = d;
+    setDuration(d);
+    onTimeUpdate?.(currentTimeRef.current, d);
+    if (activeSessionRef.current) activeSessionRef.current.songDuration = d;
   };
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const time = Number(e.target.value);
-    if (audioRef.current) {
-      audioRef.current.currentTime = time;
-      setCurrentTime(time);
-    }
+    const t = Number(e.target.value);
+    if (audioRef.current) { audioRef.current.currentTime = t; setCurrentTime(t); }
   };
 
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const v = Number(e.target.value);
-    setVolume(v);
+    setVolume(Number(e.target.value));
     setMuted(false);
   };
 
-  const toggleMute = () => {
-    setMuted(m => !m);
-  };
+  // ── Session reporting ──────────────────────────────────────────────────────
+  const reportActiveSession = useCallback((listenedSeconds?: number) => {
+    const session = activeSessionRef.current;
+    if (!session || session.reported) return;
+    const elapsed = Math.max(
+      listenedSeconds ?? audioRef.current?.currentTime ?? currentTimeRef.current,
+      currentTimeRef.current,
+    );
+    if (elapsed < 0.5) return;
+    onTrackSessionComplete?.({
+      songId: session.songId,
+      playedAt: session.playedAt,
+      listenedSeconds: elapsed,
+      songDuration: session.songDuration || durationRef.current || 0,
+    });
+    session.reported = true;
+  }, [onTrackSessionComplete]);
 
+  useEffect(() => {
+    const prev = activeSessionRef.current;
+    if (prev && prev.songId !== currentSong?.id) reportActiveSession();
+    if (!currentSong) {
+      activeSessionRef.current = null;
+      currentTimeRef.current = 0;
+      durationRef.current = 0;
+      setCurrentTime(0);
+      setDuration(0);
+      return;
+    }
+    activeSessionRef.current = {
+      songId: currentSong.id,
+      playedAt: Date.now(),
+      songDuration: currentSong.duration || 0,
+      reported: false,
+    };
+    currentTimeRef.current = 0;
+    durationRef.current = currentSong.duration || 0;
+    setCurrentTime(0);
+    setDuration(currentSong.duration || 0);
+  }, [currentSong, reportActiveSession]);
+
+  useEffect(() => () => reportActiveSession(), [reportActiveSession]);
+
+  // ── Playlist menu close-on-outside-click ──────────────────────────────────
   useEffect(() => {
     if (!playlistMenuOpen) return;
     const close = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) setPlaylistMenuOpen(false);
     };
-    document.addEventListener('click', close);
-    return () => document.removeEventListener('click', close);
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
   }, [playlistMenuOpen]);
 
   useEffect(() => {
@@ -218,33 +272,28 @@ export function Player({
     return () => document.removeEventListener('mousedown', close);
   }, [eqOpen]);
 
+  useEffect(() => { setPlaylistMenuOpen(false); }, [currentSong?.id]);
+
+  // ── EQ ─────────────────────────────────────────────────────────────────────
   const applyPreset = (name: string) => {
-    const gains = EQ_PRESETS[name];
-    if (gains) {
-      setEqGains([...gains]);
-      setEqPreset(name);
-    }
+    const g = EQ_PRESETS[name];
+    if (g) { setEqGains([...g]); setEqPreset(name); }
   };
 
-  const handleBandChange = (bandIndex: number, value: number) => {
-    setEqGains(prev => {
-      const next = [...prev];
-      next[bandIndex] = value;
-      return next;
-    });
+  const handleBandChange = (i: number, v: number) => {
+    setEqGains(prev => { const n = [...prev]; n[i] = v; return n; });
     setEqPreset('Custom');
   };
 
-  const formatTime = (time: number) => {
-    if (!time || isNaN(time)) return '0:00';
-    const minutes = Math.floor(time / 60);
-    const seconds = Math.floor(time % 60);
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  const fmt = (t: number) => {
+    if (!t || isNaN(t)) return '0:00';
+    return `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
   };
 
   return (
     <div className="h-20 bg-gray-100 dark:bg-[#181818] flex items-center justify-between px-6 shrink-0 z-20 shadow-sm border-b border-gray-200 dark:border-gray-800">
-      {/* Controls */}
+
+      {/* ── Transport controls ── */}
       <div className="flex items-center gap-2 w-1/4">
         <button
           onClick={onShuffleToggle}
@@ -260,14 +309,16 @@ export function Player({
           className="w-10 h-10 rounded-full bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center transition"
           onClick={() => setIsPlaying(!isPlaying)}
         >
-          {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" className="ml-1" />}
+          {isPlaying
+            ? <Pause size={20} fill="currentColor" />
+            : <Play  size={20} fill="currentColor" className="ml-1" />}
         </button>
         <button className="text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white transition" onClick={onNext}>
           <SkipForward size={24} fill="currentColor" />
         </button>
       </div>
 
-      {/* Center LCD Screen */}
+      {/* ── Center LCD ── */}
       <div className="flex-1 flex justify-center max-w-xl">
         <div className="bg-[#e4e4e4] dark:bg-[#282828] border border-gray-300 dark:border-black rounded w-full h-14 flex flex-col justify-center px-4 relative overflow-hidden shadow-inner">
           {currentSong ? (
@@ -275,16 +326,30 @@ export function Player({
               <div className="text-center font-medium text-sm truncate px-12">
                 {currentSong.title}
               </div>
-              <div className="text-center text-xs text-gray-500 dark:text-gray-400 truncate">
-                {currentSong.artist} - {currentSong.album}
+              <div className="flex items-center justify-center gap-1 text-xs text-gray-500 dark:text-gray-400 truncate px-12">
+                <button
+                  type="button"
+                  className="truncate max-w-[45%] hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                  onClick={() => onArtistClick?.(currentSong.artist)}
+                >
+                  {currentSong.artist}
+                </button>
+                <span className="shrink-0">-</span>
+                <button
+                  type="button"
+                  className="truncate max-w-[45%] hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                  onClick={() => onAlbumClick?.(currentSong.album)}
+                >
+                  {currentSong.album}
+                </button>
               </div>
 
-              <div className="absolute bottom-1 left-4 text-[10px] text-gray-500">{formatTime(currentTime)}</div>
-              <div className="absolute bottom-1 right-4 text-[10px] text-gray-500">-{formatTime(duration - currentTime)}</div>
+              <div className="absolute bottom-1 left-4 text-[10px] text-gray-500">{fmt(currentTime)}</div>
+              <div className="absolute bottom-1 right-4 text-[10px] text-gray-500">-{fmt(duration - currentTime)}</div>
 
-              {/* Add to playlist icon */}
+              {/* Playlist button */}
               {(onAddToPlaylist || onCreatePlaylistAndAdd) && (
-                <div className="absolute top-1 right-2" ref={menuRef}>
+                <div className="absolute top-1 right-2 z-10" ref={menuRef}>
                   <button
                     onClick={(e) => { e.stopPropagation(); setPlaylistMenuOpen(v => !v); }}
                     className="p-1 rounded text-gray-500 hover:text-gray-800 hover:bg-gray-200 dark:text-gray-400 dark:hover:text-white dark:hover:bg-gray-700"
@@ -294,8 +359,10 @@ export function Player({
                   </button>
                   {playlistMenuOpen && (
                     <div className="absolute right-0 top-full mt-1 w-52 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg py-1 z-50">
-                      <div className="px-3 py-1.5 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700">Add to playlist</div>
-                      {playlists.map((pl) => (
+                      <div className="px-3 py-1.5 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700">
+                        Add to playlist
+                      </div>
+                      {playlists.map(pl => (
                         <button
                           key={pl.id}
                           onClick={() => {
@@ -311,7 +378,7 @@ export function Player({
                         <input
                           type="text"
                           value={newPlaylistName}
-                          onChange={(e) => setNewPlaylistName(e.target.value)}
+                          onChange={e => setNewPlaylistName(e.target.value)}
                           placeholder="New playlist name"
                           className="w-full px-2 py-1 text-sm border border-gray-200 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-200"
                         />
@@ -334,7 +401,7 @@ export function Player({
               )}
 
               <div className="absolute bottom-0 left-0 w-full h-1 bg-gray-300 dark:bg-gray-700">
-                <div className="h-full bg-blue-500" style={{ width: `${(currentTime / duration) * 100}%` }}></div>
+                <div className="h-full bg-blue-500" style={{ width: `${(currentTime / duration) * 100}%` }} />
               </div>
               <input
                 type="range"
@@ -343,7 +410,7 @@ export function Player({
                 value={currentTime}
                 onChange={handleSeek}
                 step="0.1"
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                className="absolute bottom-0 left-0 w-full h-4 opacity-0 cursor-pointer"
               />
             </>
           ) : (
@@ -352,9 +419,25 @@ export function Player({
         </div>
       </div>
 
-      {/* EQ + Volume + Logo */}
+      {/* ── EQ · Volume · Now Playing · Logo ── */}
       <div className="flex items-center justify-end gap-2 w-1/4">
-        {/* ── Equalizer toggle + popover ── */}
+
+        {/* Now Playing pane toggle */}
+        <button
+          type="button"
+          onClick={onNowPlayingToggle}
+          disabled={!currentSong}
+          className={`px-2 py-1 text-xs rounded border transition-colors disabled:opacity-40 disabled:cursor-default ${
+            showNowPlaying
+              ? 'border-blue-500 bg-blue-500/10 text-blue-600 dark:text-blue-400'
+              : 'border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800'
+          }`}
+          title="Toggle Now Playing panel"
+        >
+          Now Playing
+        </button>
+
+        {/* Equalizer */}
         <div className="relative" ref={eqRef}>
           <button
             onClick={() => setEqOpen(v => !v)}
@@ -363,10 +446,8 @@ export function Player({
           >
             <SlidersHorizontal size={18} />
           </button>
-
           {eqOpen && (
             <div className="absolute right-0 top-full mt-2 bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-700 rounded-xl shadow-xl z-50 p-3 w-[280px]">
-              {/* Preset chips */}
               <div className="flex flex-wrap gap-1 mb-3">
                 {Object.keys(EQ_PRESETS).map(name => (
                   <button
@@ -387,8 +468,6 @@ export function Player({
                   </span>
                 )}
               </div>
-
-              {/* Band sliders */}
               <div className="flex items-end justify-between gap-1">
                 {EQ_BANDS.map((band, i) => (
                   <div key={band.freq} className="flex flex-col items-center gap-1">
@@ -396,27 +475,21 @@ export function Player({
                       {eqGains[i] > 0 ? '+' : ''}{eqGains[i].toFixed(0)}
                     </span>
                     <input
-                      type="range"
-                      min={-12}
-                      max={12}
-                      step={1}
-                      value={eqGains[i]}
-                      onChange={(e) => handleBandChange(i, Number(e.target.value))}
+                      type="range" min={-12} max={12} step={1} value={eqGains[i]}
+                      onChange={e => handleBandChange(i, Number(e.target.value))}
                       className="eq-slider accent-blue-500"
                       style={{
-                        writingMode: 'vertical-lr' as any,
+                        writingMode: 'vertical-lr' as React.CSSProperties['writingMode'],
                         direction: 'rtl',
                         width: '18px',
                         height: '80px',
-                        appearance: 'slider-vertical' as any,
+                        appearance: 'slider-vertical' as React.CSSProperties['appearance'],
                       }}
                     />
                     <span className="text-[9px] text-gray-400 dark:text-gray-500">{band.label}</span>
                   </div>
                 ))}
               </div>
-
-              {/* dB scale labels */}
               <div className="flex justify-between mt-1 px-1">
                 <span className="text-[8px] text-gray-400">-12 dB</span>
                 <span className="text-[8px] text-gray-400">0</span>
@@ -426,36 +499,25 @@ export function Player({
           )}
         </div>
 
-        {/* ── Volume ── */}
-        <button onClick={toggleMute} className="text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white transition">
+        {/* Volume */}
+        <button onClick={() => setMuted(m => !m)} className="text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white transition">
           {muted || volume === 0 ? <VolumeX size={20} /> : <Volume2 size={20} />}
         </button>
         <input
-          type="range"
-          min="0"
-          max="1"
-          step="0.01"
+          type="range" min="0" max="1" step="0.01"
           value={muted ? 0 : volume}
           onChange={handleVolumeChange}
           className="w-24 accent-blue-500 cursor-pointer"
         />
+
+        {/* Logo */}
         <span className="ml-2 relative select-none" aria-label="KyleAmp">
-          <span
-            className="text-xl font-extrabold tracking-tight"
-            style={{
-              color: 'transparent',
-              textShadow: '0 1px 1px rgba(255,255,255,0.25)',
-            }}
-          >
+          <span className="text-xl font-extrabold tracking-tight" style={{ color: 'transparent', textShadow: '0 1px 1px rgba(255,255,255,0.25)' }}>
             KyleAmp
           </span>
           <span
             className="absolute inset-0 text-xl font-extrabold tracking-tight"
-            style={{
-              background: 'linear-gradient(180deg, #a8a8a8 0%, #6a6a6a 100%)',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
-            }}
+            style={{ background: 'linear-gradient(180deg,#a8a8a8 0%,#6a6a6a 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}
           >
             KyleAmp
           </span>
@@ -466,7 +528,7 @@ export function Player({
         ref={audioRef}
         onTimeUpdate={handleTimeUpdate}
         onLoadedMetadata={handleLoadedMetadata}
-        onEnded={onNext}
+        onEnded={() => { reportActiveSession(durationRef.current || currentTimeRef.current); onNext(); }}
         crossOrigin="anonymous"
       />
     </div>

@@ -110,6 +110,8 @@ export async function parseMetadataInBackground(
           const metadata = await mm.parseBlob(file, { duration: true, skipCovers: true });
 
           const update: Partial<Song> = {};
+
+          // ── Core tags ──────────────────────────────────────────────────────
           if (metadata.common.title) update.title = metadata.common.title;
           if (metadata.common.artist || metadata.common.albumartist) {
             update.artist = metadata.common.artist || metadata.common.albumartist!;
@@ -117,8 +119,46 @@ export async function parseMetadataInBackground(
           if (metadata.common.album) update.album = metadata.common.album;
           if (metadata.format.duration) update.duration = metadata.format.duration;
           if (metadata.common.track?.no) update.trackNumber = metadata.common.track.no;
+          if (metadata.common.track?.of) update.totalTracks = metadata.common.track.of;
           if (metadata.common.year) update.year = metadata.common.year;
           if (metadata.common.genre?.[0]) update.genre = metadata.common.genre[0];
+
+          // ── Extended tags ──────────────────────────────────────────────────
+          if (metadata.common.albumartist) update.albumArtist = metadata.common.albumartist;
+          if (metadata.common.composer?.[0]) update.composer = metadata.common.composer[0];
+          if (metadata.common.disk?.no) update.diskNumber = metadata.common.disk.no;
+          if (metadata.common.disk?.of) update.totalDiscs = metadata.common.disk.of;
+          if (metadata.common.bpm) update.bpm = metadata.common.bpm;
+          const common = metadata.common as unknown as Record<string, unknown>;
+          if (common.initialkey) update.initialKey = String(common.initialkey);
+          if (metadata.common.isrc) update.isrc = Array.isArray(metadata.common.isrc) ? metadata.common.isrc[0] : metadata.common.isrc;
+          if (metadata.common.copyright) update.copyright = metadata.common.copyright;
+          if (metadata.common.encodedby) update.encodedBy = metadata.common.encodedby;
+          if (metadata.common.encodersettings) update.encoderSettings = metadata.common.encodersettings;
+          const commentText = (metadata.common.comment as Array<{ text?: string }> | undefined)?.[0]?.text;
+          if (commentText) update.comment = commentText;
+          if (metadata.common.label?.[0]) update.label = metadata.common.label[0];
+          const lyricsText = (metadata.common.lyrics as Array<{ text?: string }> | undefined)?.[0]?.text;
+          if (lyricsText) update.lyrics = lyricsText;
+          const rgt = (metadata.common.replaygain_track_gain as { dB?: number } | undefined)?.dB;
+          if (rgt != null) update.replayGainTrack = rgt;
+          const rga = (metadata.common.replaygain_album_gain as { dB?: number } | undefined)?.dB;
+          if (rga != null) update.replayGainAlbum = rga;
+          if (metadata.common.language) update.language = metadata.common.language;
+          if (common.mood) update.mood = String(common.mood);
+          if (metadata.common.musicbrainz_recordingid) update.musicbrainzRecordingId = metadata.common.musicbrainz_recordingid;
+          if (metadata.common.musicbrainz_albumid) update.musicbrainzAlbumId = metadata.common.musicbrainz_albumid;
+          if (metadata.common.musicbrainz_artistid?.[0]) update.musicbrainzArtistId = metadata.common.musicbrainz_artistid[0];
+          if (metadata.common.musicbrainz_albumartistid?.[0]) update.musicbrainzAlbumArtistId = metadata.common.musicbrainz_albumartistid[0];
+
+          // ── Format / technical ─────────────────────────────────────────────
+          if (metadata.format.container) update.container = metadata.format.container;
+          if (metadata.format.codec) update.codec = metadata.format.codec;
+          if (metadata.format.bitrate) update.bitrate = metadata.format.bitrate;
+          if (metadata.format.sampleRate) update.sampleRate = metadata.format.sampleRate;
+          if (metadata.format.numberOfChannels) update.channels = metadata.format.numberOfChannels;
+          if (metadata.format.lossless != null) update.lossless = metadata.format.lossless;
+          if (metadata.format.codecProfile) update.codecProfile = metadata.format.codecProfile;
 
           if (Object.keys(update).length > 0) {
             updates.set(song.id, update);

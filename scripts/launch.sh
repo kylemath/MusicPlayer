@@ -105,6 +105,9 @@ if ! curl -s "$URL" >/dev/null 2>&1; then
 fi
 
 # ---------- Open the app ----------
+# Prefer the installed PWA (custom icon, standalone) — but only when launched via
+# this .app, which has already started the server. Do NOT open the PWA directly
+# from Chrome Apps/Dock — use this .app launcher instead.
 PWA_APP=""
 for dir in "$HOME/Applications/Chrome Apps.localized" "$HOME/Applications/Chrome Apps" "$HOME/Applications"; do
   if [ -d "$dir/$APP_NAME.app" ]; then
@@ -119,13 +122,13 @@ if [ -n "$PWA_APP" ]; then
 else
   echo "PWA not installed — opening in Chrome."
   if [ -d "/Applications/Google Chrome.app" ]; then
-    open -na "Google Chrome" --args "$URL"
+    open -na "Google Chrome" --args "--app=$URL"
   elif [ -d "/Applications/Chromium.app" ]; then
-    open -na "Chromium" --args "$URL"
+    open -na "Chromium" --args "--app=$URL"
   elif [ -d "/Applications/Microsoft Edge.app" ]; then
-    open -na "Microsoft Edge" --args "$URL"
+    open -na "Microsoft Edge" --args "--app=$URL"
   elif [ -d "/Applications/Brave Browser.app" ]; then
-    open -na "Brave Browser" --args "$URL"
+    open -na "Brave Browser" --args "--app=$URL"
   else
     open "$URL"
   fi
@@ -136,7 +139,7 @@ else
 1. Look for the install icon (⊕) on the right side of the address bar
 2. Click it and choose Install
 
-Next time you launch, it will open as its own app with the correct icon.\" with title \"$APP_NAME — Install as App\" buttons {\"OK\"} default button \"OK\"" &
+Then always launch via the Local Player.app (from create-app) — not the PWA directly — so the server starts first.\" with title \"$APP_NAME — Install as App\" buttons {\"OK\"} default button \"OK\"" &
 fi
 
 wait "$SERVER_PID"

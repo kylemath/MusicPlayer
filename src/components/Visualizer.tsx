@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Play as PlayIcon, Zap } from 'lucide-react';
+import { Play as PlayIcon, Zap, Maximize2, Minimize2 } from 'lucide-react';
 import { DEFAULT_SKETCH, PRESET_SKETCHES } from '../lib/defaultSketches';
 import { CodeEditor } from './CodeEditor';
 import { ResizeHandle } from './ResizeHandle';
@@ -19,6 +19,7 @@ interface AudioData {
 }
 
 export function Visualizer({ analyser }: VisualizerProps) {
+  const visualizerRef = useRef<HTMLDivElement>(null);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const p5InstanceRef = useRef<any>(null);
   const audioDataRef = useRef<AudioData>({
@@ -41,6 +42,7 @@ export function Visualizer({ analyser }: VisualizerProps) {
   const [canvasHeight, setCanvasHeight] = useState(200);
   const [catalogueHeight, setCatalogueHeight] = useState(192);
   const [autorun, setAutorun] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   // Continuously read analyser data
   useEffect(() => {
@@ -249,8 +251,48 @@ export function Visualizer({ analyser }: VisualizerProps) {
     setCatalogueHeight((h) => Math.max(80, Math.min(400, h + delta)));
   }, []);
 
+  useEffect(() => {
+    const syncFullscreen = () => {
+      setIsFullscreen(document.fullscreenElement === visualizerRef.current);
+    };
+
+    document.addEventListener('fullscreenchange', syncFullscreen);
+    syncFullscreen();
+
+    return () => document.removeEventListener('fullscreenchange', syncFullscreen);
+  }, []);
+
+  const toggleFullscreen = useCallback(async () => {
+    try {
+      if (document.fullscreenElement === visualizerRef.current) {
+        await document.exitFullscreen();
+        return;
+      }
+
+      if (visualizerRef.current) {
+        await visualizerRef.current.requestFullscreen();
+      }
+    } catch (error) {
+      console.error('Failed to toggle fullscreen visualizer', error);
+    }
+  }, []);
+
   return (
-    <div className="flex flex-col h-full min-w-0 bg-gray-50 dark:bg-[#121212]">
+    <div ref={visualizerRef} className="flex flex-col h-full min-w-0 bg-gray-50 dark:bg-[#121212]">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-200 dark:border-gray-800 bg-gray-100 dark:bg-[#1a1a1a]">
+        <div className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+          Visualizer
+        </div>
+        <button
+          type="button"
+          onClick={toggleFullscreen}
+          className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors"
+          title={isFullscreen ? 'Exit Fullscreen' : 'Open Fullscreen'}
+        >
+          {isFullscreen ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
+          {isFullscreen ? 'Windowed' : 'Fullscreen'}
+        </button>
+      </div>
       {/* ── Canvas (resizable height) ── */}
       <div
         ref={canvasContainerRef}

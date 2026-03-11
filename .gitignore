@@ -31,3 +31,6 @@ build/
 dev-dist/
 .localplayer.log
 favicon.ico
+
+# Editor workspace files (machine-local, no value in repo)
+*.code-workspace
