@@ -80,6 +80,16 @@ export async function saveArtistUrl(artist: string, url: string): Promise<void> 
 // Record<variantName, canonicalName> — populated by the LLM grouping feature
 // or by manual edits.  Applied on top of local normalization in artistNorm.ts.
 
+const QUEUE_KEY = 'music_queue';
+
+export async function getQueue(): Promise<string[]> {
+  return (await get<string[]>(QUEUE_KEY)) ?? [];
+}
+
+export async function saveQueue(songIds: string[]): Promise<void> {
+  await set(QUEUE_KEY, songIds);
+}
+
 const ARTIST_OVERRIDES_KEY = 'artist_group_overrides';
 
 export async function getArtistGroupOverrides(): Promise<Record<string, string>> {

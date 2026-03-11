@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { List } from 'react-window';
 import type { FilterType, HistoryViewItem, Song, SortColumn, SortDirection } from '../types';
-import { RefreshCw, ArrowUp, ArrowDown } from 'lucide-react';
+import { RefreshCw, ArrowUp, ArrowDown, ListPlus } from 'lucide-react';
 
 interface LibraryProps {
   songs: Song[];
@@ -11,7 +11,10 @@ interface LibraryProps {
   sortDirection: SortDirection;
   onSort: (column: SortColumn, direction: SortDirection) => void;
   onPlay: (song: Song) => void;
+  onSelect?: (song: Song) => void;
+  onAddToQueue?: (song: Song) => void;
   currentSongId?: string;
+  selectedSongId?: string;
   contextSongId?: string;
   onRescan: () => void;
 }
@@ -28,32 +31,38 @@ function formatTime(time: number) {
 interface SongRowExtraProps {
   songs: Song[];
   currentSongId?: string;
+  selectedSongId?: string;
   onPlay: (song: Song) => void;
+  onSelect?: (song: Song) => void;
+  onAddToQueue?: (song: Song) => void;
 }
 
 interface HistoryRowExtraProps {
   items: HistoryViewItem[];
   currentSongId?: string;
+  selectedSongId?: string;
   onPlay: (song: Song) => void;
+  onSelect?: (song: Song) => void;
+}
+
+function rowClassName(isCurrent: boolean, isSelected: boolean, isEven: boolean) {
+  if (isCurrent) return 'bg-blue-600 text-white';
+  if (isSelected) return 'bg-blue-500/15 ring-1 ring-inset ring-blue-500/40 text-gray-800 dark:text-gray-200';
+  return isEven
+    ? 'bg-white dark:bg-[#121212] text-gray-800 dark:text-gray-200 hover:bg-blue-500/10 dark:hover:bg-blue-600/10'
+    : 'bg-[#f8f9fa] dark:bg-[#161616] text-gray-800 dark:text-gray-200 hover:bg-blue-500/10 dark:hover:bg-blue-600/10';
 }
 
 function SongRow(props: { ariaAttributes: { "aria-posinset": number; "aria-setsize": number; role: "listitem" }; index: number; style: React.CSSProperties } & SongRowExtraProps) {
-  const { index, style, songs, currentSongId, onPlay } = props;
+  const { index, style, songs, currentSongId, selectedSongId, onPlay, onSelect, onAddToQueue } = props;
   const song = songs[index];
   if (!song) return null;
-
-  const isCurrent = song.id === currentSongId;
-  const isEven = index % 2 === 0;
 
   return (
     <div
       style={style}
-      className={`flex items-center px-4 text-sm cursor-default select-none
-        ${isCurrent
-          ? 'bg-blue-600 text-white'
-          : isEven
-            ? 'bg-white dark:bg-[#121212] text-gray-800 dark:text-gray-200 hover:bg-blue-500 hover:text-white dark:hover:bg-blue-600'
-            : 'bg-[#f8f9fa] dark:bg-[#161616] text-gray-800 dark:text-gray-200 hover:bg-blue-500 hover:text-white dark:hover:bg-blue-600'}`}
+      className={`flex items-center px-4 text-sm cursor-default select-none group ${rowClassName(song.id === currentSongId, song.id === selectedSongId, index % 2 === 0)}`}
+      onClick={() => onSelect?.(song)}
       onDoubleClick={() => onPlay(song)}
     >
       <div className="w-8 flex-shrink-0 text-gray-400 text-xs">{index + 1}</div>
@@ -62,7 +71,18 @@ function SongRow(props: { ariaAttributes: { "aria-posinset": number; "aria-setsi
       <div className="w-16 flex-shrink-0 text-right pr-4 tabular-nums">{formatTime(song.duration)}</div>
       <div className="flex-1 min-w-[120px] pr-4 truncate">{song.album}</div>
       <div className="w-24 flex-shrink-0 truncate">{song.genre || ''}</div>
-      <div className="w-16 flex-shrink-0"></div>
+      <div className="w-16 flex-shrink-0 flex justify-end">
+        {onAddToQueue && (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onAddToQueue(song); }}
+            title="Add to queue"
+            className="p-0.5 rounded opacity-0 group-hover:opacity-100 text-gray-400 hover:text-blue-500 transition-opacity"
+          >
+            <ListPlus size={14} />
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -77,22 +97,15 @@ function formatPlayedAt(time: number) {
 }
 
 function HistoryRow(props: { ariaAttributes: { "aria-posinset": number; "aria-setsize": number; role: "listitem" }; index: number; style: React.CSSProperties } & HistoryRowExtraProps) {
-  const { index, style, items, currentSongId, onPlay } = props;
+  const { index, style, items, currentSongId, selectedSongId, onPlay, onSelect } = props;
   const item = items[index];
   if (!item) return null;
-
-  const isCurrent = item.song.id === currentSongId;
-  const isEven = index % 2 === 0;
 
   return (
     <div
       style={style}
-      className={`flex items-center px-4 text-sm cursor-default select-none
-        ${isCurrent
-          ? 'bg-blue-600 text-white'
-          : isEven
-            ? 'bg-white dark:bg-[#121212] text-gray-800 dark:text-gray-200 hover:bg-blue-500 hover:text-white dark:hover:bg-blue-600'
-            : 'bg-[#f8f9fa] dark:bg-[#161616] text-gray-800 dark:text-gray-200 hover:bg-blue-500 hover:text-white dark:hover:bg-blue-600'}`}
+      className={`flex items-center px-4 text-sm cursor-default select-none ${rowClassName(item.song.id === currentSongId, item.song.id === selectedSongId, index % 2 === 0)}`}
+      onClick={() => onSelect?.(item.song)}
       onDoubleClick={() => onPlay(item.song)}
     >
       <div className="w-8 flex-shrink-0 text-gray-400 text-xs">{index + 1}</div>
@@ -108,19 +121,10 @@ function HistoryRow(props: { ariaAttributes: { "aria-posinset": number; "aria-se
 }
 
 function SortHeader({
-  label,
-  column,
-  currentColumn,
-  direction,
-  onSort,
-  className = '',
+  label, column, currentColumn, direction, onSort, className = '',
 }: {
-  label: string;
-  column: SortColumn;
-  currentColumn: SortColumn;
-  direction: SortDirection;
-  onSort: (col: SortColumn, dir: SortDirection) => void;
-  className?: string;
+  label: string; column: SortColumn; currentColumn: SortColumn; direction: SortDirection;
+  onSort: (col: SortColumn, dir: SortDirection) => void; className?: string;
 }) {
   const isActive = currentColumn === column;
   const handleClick = useCallback(() => {
@@ -139,43 +143,79 @@ function SortHeader({
 }
 
 export function Library({
-  songs,
-  historyItems = [],
-  mode = 'All',
-  sortColumn,
-  sortDirection,
-  onSort,
-  onPlay,
-  currentSongId,
-  contextSongId,
-  onRescan,
+  songs, historyItems = [], mode = 'All',
+  sortColumn, sortDirection, onSort,
+  onPlay, onSelect, onAddToQueue,
+  currentSongId, selectedSongId, contextSongId, onRescan,
 }: LibraryProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
-  const rowProps: SongRowExtraProps = { songs, currentSongId, onPlay };
-  const historyRowProps: HistoryRowExtraProps = { items: historyItems, currentSongId, onPlay };
+  const rowProps: SongRowExtraProps = { songs, currentSongId, selectedSongId, onPlay, onSelect, onAddToQueue };
+  const historyRowProps: HistoryRowExtraProps = { items: historyItems, currentSongId, selectedSongId, onPlay, onSelect };
   const isHistoryMode = mode === 'History';
+  const isQueueMode = mode === 'Queue';
+
   const contextIndex = useMemo(() => {
     if (!contextSongId) return -1;
-    if (isHistoryMode) {
-      return historyItems.findIndex((item) => item.song.id === contextSongId);
-    }
-    return songs.findIndex((song) => song.id === contextSongId);
+    if (isHistoryMode) return historyItems.findIndex(item => item.song.id === contextSongId);
+    return songs.findIndex(song => song.id === contextSongId);
   }, [contextSongId, historyItems, isHistoryMode, songs]);
 
   useEffect(() => {
     if (contextIndex < 0) return;
-
     const frame = requestAnimationFrame(() => {
       const scrollContainer = bodyRef.current?.firstElementChild as HTMLElement | null;
       if (!scrollContainer) return;
-
       const viewportHeight = bodyRef.current?.clientHeight ?? 0;
       const targetTop = Math.max(0, contextIndex * ROW_HEIGHT - Math.max(0, viewportHeight / 2 - ROW_HEIGHT * 2));
       scrollContainer.scrollTo({ top: targetTop, behavior: 'smooth' });
     });
-
     return () => cancelAnimationFrame(frame);
   }, [contextIndex]);
+
+  // Arrow-key navigation: move selectedSongId up/down
+  useEffect(() => {
+    const container = bodyRef.current;
+    if (!container || !onSelect) return;
+
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Enter') return;
+      e.preventDefault();
+
+      const list = isHistoryMode ? historyItems.map(i => i.song) : songs;
+      if (list.length === 0) return;
+
+      const currentIdx = selectedSongId ? list.findIndex(s => s.id === selectedSongId) : -1;
+
+      if (e.key === 'Enter' && currentIdx >= 0) {
+        onPlay(list[currentIdx]);
+        return;
+      }
+
+      let nextIdx: number;
+      if (e.key === 'ArrowDown') {
+        nextIdx = currentIdx < list.length - 1 ? currentIdx + 1 : 0;
+      } else {
+        nextIdx = currentIdx > 0 ? currentIdx - 1 : list.length - 1;
+      }
+      onSelect(list[nextIdx]);
+
+      // Scroll the row into view
+      const scrollContainer = bodyRef.current?.firstElementChild as HTMLElement | null;
+      if (scrollContainer) {
+        const rowTop = nextIdx * ROW_HEIGHT;
+        const viewportH = bodyRef.current?.clientHeight ?? 0;
+        const scrollTop = scrollContainer.scrollTop;
+        if (rowTop < scrollTop) {
+          scrollContainer.scrollTo({ top: rowTop, behavior: 'smooth' });
+        } else if (rowTop + ROW_HEIGHT > scrollTop + viewportH) {
+          scrollContainer.scrollTo({ top: rowTop + ROW_HEIGHT - viewportH, behavior: 'smooth' });
+        }
+      }
+    };
+
+    container.addEventListener('keydown', handler);
+    return () => container.removeEventListener('keydown', handler);
+  }, [songs, historyItems, isHistoryMode, selectedSongId, onSelect, onPlay]);
 
   return (
     <div className="flex-1 flex flex-col overflow-x-auto bg-gray-50 dark:bg-[#1a1a1a]">
@@ -231,32 +271,18 @@ export function Library({
         </div>
 
         {/* Virtualized Table Body */}
-        <div ref={bodyRef} className="flex-1 overflow-hidden min-h-0 bg-white dark:bg-[#121212]">
+        <div ref={bodyRef} tabIndex={0} className="flex-1 overflow-hidden min-h-0 bg-white dark:bg-[#121212] outline-none">
           {isHistoryMode ? (
             historyItems.length > 0 ? (
-              <List
-                rowComponent={HistoryRow}
-                rowCount={historyItems.length}
-                rowHeight={ROW_HEIGHT}
-                rowProps={historyRowProps}
-                overscanCount={20}
-                style={{ height: '100%', width: '100%' }}
-              />
+              <List rowComponent={HistoryRow} rowCount={historyItems.length} rowHeight={ROW_HEIGHT} rowProps={historyRowProps} overscanCount={20} style={{ height: '100%', width: '100%' }} />
             ) : (
               <div className="p-8 text-center text-gray-500">No play history yet.</div>
             )
           ) : songs.length > 0 ? (
-            <List
-              rowComponent={SongRow}
-              rowCount={songs.length}
-              rowHeight={ROW_HEIGHT}
-              rowProps={rowProps}
-              overscanCount={20}
-              style={{ height: '100%', width: '100%' }}
-            />
+            <List rowComponent={SongRow} rowCount={songs.length} rowHeight={ROW_HEIGHT} rowProps={rowProps} overscanCount={20} style={{ height: '100%', width: '100%' }} />
           ) : (
             <div className="p-8 text-center text-gray-500">
-              No songs found.
+              {isQueueMode ? 'Queue is empty.' : 'No songs found.'}
             </div>
           )}
         </div>

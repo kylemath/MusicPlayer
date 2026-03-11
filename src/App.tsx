@@ -1,15 +1,15 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type { FilterType, HistorySortColumn, HistoryViewItem, PlayHistoryEntry, PlayHistoryState, Song, SongSortColumn, SortDirection } from './types';
-import { getDirectoryHandle, saveDirectoryHandle, getSongsCache, saveSongsCache, getPlaylists, savePlaylists, getPlayHistory, savePlayHistory, getArtworkBlob, saveArtworkBlob, getArtistUrl, saveArtistUrl, getArtistGroupOverrides, saveArtistGroupOverrides } from './db';
+import { getDirectoryHandle, saveDirectoryHandle, getSongsCache, saveSongsCache, getPlaylists, savePlaylists, getPlayHistory, savePlayHistory, getArtworkBlob, saveArtworkBlob, getArtistUrl, saveArtistUrl, getArtistGroupOverrides, saveArtistGroupOverrides, getQueue, saveQueue } from './db';
 import { getCanonicalArtist, artistGroupKey } from './lib/artistNorm';
 import type { AlbumArtworkResult } from './lib/artwork';
-import { searchArtistImage } from './lib/artwork';
+import { searchArtistImage, searchAlbumArtwork } from './lib/artwork';
 import { collectFiles, parseMetadataInBackground } from './lib/scanner';
 import { Player } from './components/Player';
 import { Sidebar } from './components/Sidebar';
 import { Library } from './components/Library';
 import { Visualizer } from './components/Visualizer';
-import { NowPlayingPane } from './components/NowPlaying';
+import { SongDetailsPane } from './components/NowPlaying';
 import { ResizeHandle } from './components/ResizeHandle';
 import { FolderOpen, Loader2, Activity } from 'lucide-react';
 
@@ -34,7 +34,9 @@ function App() {
   const [dirHandle, setDirHandle] = useState<FileSystemDirectoryHandle | null>(null);
 
   const [currentSong, setCurrentSong] = useState<Song | null>(null);
+  const [selectedSong, setSelectedSong] = useState<Song | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [userQueue, setUserQueueState] = useState<string[]>([]);
 
   const [filterType, setFilterType] = useState<FilterType>('All');
   const [filterValue, setFilterValue] = useState<string>('');
@@ -59,11 +61,8 @@ function App() {
 
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
   const [showVisualizer, setShowVisualizer] = useState(true);
-  const [showNowPlaying, setShowNowPlaying] = useState(false);
+  const [showSongDetails, setShowSongDetails] = useState(false);
 
-  // ─── NowPlaying pane: live time from Player ──────────────────────────────
-  const [playerTime, setPlayerTime] = useState(0);
-  const [playerDuration, setPlayerDuration] = useState(0);
   const seekRef = useRef<((time: number) => void) | null>(null);
 
   // ─── Artwork cache ────────────────────────────────────────────────────────
@@ -86,7 +85,7 @@ function App() {
   // ─── Resizable column widths (px) ───────────────────────────────────────
   const [sidebarW, setSidebarW] = useState(220);
   const [vizPanelW, setVizPanelW] = useState(520);
-  const [nowPlayingW, setNowPlayingW] = useState(280);
+  const [detailsPanelW, setDetailsPanelW] = useState(280);
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -112,6 +111,8 @@ function App() {
       setPlayHistoryState(history);
       const overrides = await getArtistGroupOverrides();
       setArtistGroupOverridesState(overrides);
+      const q = await getQueue();
+      setUserQueueState(q);
     }
     init();
   }, []);
@@ -183,7 +184,9 @@ function App() {
     }
   }, []);
 
-  const playSong = (song: Song) => { setCurrentSong(song); setIsPlaying(true); };
+  const playSong = (song: Song) => { setCurrentSong(song); setSelectedSong(song); setIsPlaying(true); };
+  const selectSong = useCallback((song: Song) => { setSelectedSong(song); }, []);
+  const displaySong = selectedSong ?? currentSong;
 
   const historyItems = useMemo(() => {
     const songMap = new Map(songs.map(song => [song.id, song]));
@@ -248,8 +251,14 @@ function App() {
     return list;
   }, [filteredHistoryItems, historySortColumn, historySortDirection]);
 
+  const queueSongs = useMemo(() => {
+    const songMap = new Map(songs.map(s => [s.id, s]));
+    return userQueue.map(id => songMap.get(id)).filter((s): s is Song => Boolean(s));
+  }, [songs, userQueue]);
+
   const songListForView = useMemo(() => {
     if (filterType === 'History') return sortedHistoryItems.map(item => item.song);
+    if (filterType === 'Queue') return queueSongs;
     let list = songs;
     if (filterType === 'Artists' && filterValue) {
       // Match by canonical name so "Kid Cudi feat. X" rows still show when
@@ -289,7 +298,7 @@ function App() {
         return terms.every(t => all.includes(t));
       });
     }
-    if (filterType === 'History') return list;
+    if (filterType === 'History' || filterType === 'Queue') return list;
     const sorted = [...list].sort((a, b) => {
       let va: string | number = (a as any)[sortColumn] ?? '';
       let vb: string | number = (b as any)[sortColumn] ?? '';
@@ -305,7 +314,28 @@ function App() {
   }, [songListForView, searchQueryDebounced, sortColumn, sortDirection, shuffleOn, playlists, filterType]);
 
   const currentQueueIndex = currentSong ? queue.findIndex(s => s.id === currentSong.id) : -1;
-  const currentSongStats = currentSong ? playHistory.stats[currentSong.id] : undefined;
+  const displaySongStats = displaySong ? playHistory.stats[displaySong.id] : undefined;
+
+  const addToQueue = useCallback((song: Song) => {
+    setUserQueueState(prev => {
+      const next = [...prev, song.id];
+      saveQueue(next);
+      return next;
+    });
+  }, []);
+
+  const removeFromQueue = useCallback((index: number) => {
+    setUserQueueState(prev => {
+      const next = prev.filter((_, i) => i !== index);
+      saveQueue(next);
+      return next;
+    });
+  }, []);
+
+  const clearQueue = useCallback(() => {
+    setUserQueueState([]);
+    saveQueue([]);
+  }, []);
 
   const nextSong = () => {
     if (!currentSong || currentQueueIndex < 0) return;
@@ -355,28 +385,97 @@ function App() {
     });
   }, []);
 
-  // When the current song changes, pull album artwork + artist avatar from
-  // IndexedDB if not already in memory. Both are no-ops if not yet cached.
+  // Tracks which album/artist lookups have already been attempted this session
+  // so we don't re-hit APIs for the same key after a failure.
+  const autoSearchedRef = useRef(new Set<string>());
+
+  // When the current song changes: load cached artwork from IndexedDB, and if
+  // nothing is cached, automatically search external APIs and persist the result.
   useEffect(() => {
     if (!currentSong) return;
+    let cancelled = false;
 
-    const albumKey = artworkCacheKey(currentSong.artist, currentSong.album);
+    const { artist, album } = currentSong;
+    const albumKey = artworkCacheKey(artist, album);
+    const canonical = getCanonicalArtist(artist, artistGroupOverrides);
+    const aRawKey = artistCacheKey(artist);
+    const aCanonKey = artistCacheKey(canonical);
+
+    // ── Album artwork ──
     if (!artworkCache.has(albumKey)) {
-      getArtworkBlob(currentSong.artist, currentSong.album).then(blob => {
-        if (!blob) return;
-        const url = URL.createObjectURL(blob);
-        setArtworkCache(prev => new Map(prev).set(albumKey, url));
+      getArtworkBlob(artist, album).then(async (blob) => {
+        if (cancelled) return;
+        if (blob) {
+          setArtworkCache(prev => new Map(prev).set(albumKey, URL.createObjectURL(blob)));
+          return;
+        }
+        if (autoSearchedRef.current.has(`alb:${albumKey}`)) return;
+        autoSearchedRef.current.add(`alb:${albumKey}`);
+        try {
+          const result = await searchAlbumArtwork(album, artist);
+          if (cancelled) return;
+          const res = await fetch(result.imageUrl);
+          if (!res.ok || cancelled) return;
+          const dlBlob = await res.blob();
+          if (cancelled) return;
+          await saveArtworkBlob(artist, album, dlBlob);
+          setArtworkCache(prev => new Map(prev).set(albumKey, URL.createObjectURL(dlBlob)));
+        } catch { /* auto-search miss — user can still retry manually */ }
       });
     }
 
-    const aKey = artistCacheKey(currentSong.artist);
-    if (!artistCache.has(aKey)) {
-      getArtistUrl(currentSong.artist).then(url => {
-        if (!url) return;
-        setArtistCache(prev => new Map(prev).set(aKey, url));
+    // ── Artist image ──
+    if (!artistCache.has(aRawKey) || !artistCache.has(aCanonKey)) {
+      Promise.all([
+        getArtistUrl(artist),
+        aCanonKey !== aRawKey ? getArtistUrl(canonical) : Promise.resolve(undefined),
+      ]).then(async ([rawUrl, canonUrl]) => {
+        if (cancelled) return;
+        const existing = rawUrl || canonUrl;
+        if (existing) {
+          setArtistCache(prev => {
+            const next = new Map(prev);
+            next.set(aRawKey, existing);
+            next.set(aCanonKey, existing);
+            return next;
+          });
+          return;
+        }
+        if (autoSearchedRef.current.has(`art:${aCanonKey}`)) return;
+        autoSearchedRef.current.add(`art:${aCanonKey}`);
+        try {
+          const url = await searchArtistImage(artist);
+          if (cancelled) return;
+          await saveArtistUrl(artist, url);
+          if (aCanonKey !== aRawKey) await saveArtistUrl(canonical, url);
+          setArtistCache(prev => {
+            const next = new Map(prev);
+            next.set(aRawKey, url);
+            next.set(aCanonKey, url);
+            return next;
+          });
+        } catch { /* auto-search miss */ }
       });
     }
-  }, [currentSong]);
+
+    return () => { cancelled = true; };
+  }, [currentSong, artistGroupOverrides]);
+
+  // Album name → artwork object URL, for sidebar thumbnails.
+  // Iterates songs once (memoised) and picks the first cached artwork per album.
+  const albumArtworks = useMemo(() => {
+    const map = new Map<string, string>();
+    const checked = new Set<string>();
+    for (const song of songs) {
+      if (map.has(song.album)) continue;
+      const key = artworkCacheKey(song.artist, song.album);
+      if (checked.has(key)) continue;
+      checked.add(key);
+      const url = artworkCache.get(key);
+      if (url) map.set(song.album, url);
+    }
+    return map;
+  }, [songs, artworkCache]);
 
   // Called by NowPlayingPane when a search succeeds.
   // 1. Fetches the image and stores the Blob in IndexedDB.
@@ -404,10 +503,21 @@ function App() {
   // <img src> loads these fine — the browser doesn't enforce CORS on image elements.
   const handleArtistImageFound = useCallback(async (artist: string): Promise<string> => {
     const url = await searchArtistImage(artist);
+    const canonical = getCanonicalArtist(artist, artistGroupOverrides);
+    const canonKey = artistCacheKey(canonical);
+    const rawKey = artistCacheKey(artist);
+
     await saveArtistUrl(artist, url);
-    setArtistCache(prev => new Map(prev).set(artistCacheKey(artist), url));
+    if (canonKey !== rawKey) await saveArtistUrl(canonical, url);
+
+    setArtistCache(prev => {
+      const next = new Map(prev);
+      next.set(rawKey, url);
+      next.set(canonKey, url);
+      return next;
+    });
     return url;
-  }, []);
+  }, [artistGroupOverrides]);
 
   const handleArtistGroupOverridesChange = useCallback(
     (next: Record<string, string>) => {
@@ -419,11 +529,6 @@ function App() {
 
   const handleAnalyserReady = useCallback((node: AnalyserNode) => setAnalyser(node), []);
 
-  const handleTimeUpdate = useCallback((t: number, d: number) => {
-    setPlayerTime(t);
-    setPlayerDuration(d);
-  }, []);
-
   // ─── Resize handlers ────────────────────────────────
   const handleSidebarDrag = useCallback((delta: number) => {
     setSidebarW(w => clamp(w + delta, 140, 600));
@@ -433,8 +538,8 @@ function App() {
     setVizPanelW(w => Math.max(200, w - delta));
   }, []);
 
-  const handleNowPlayingDrag = useCallback((delta: number) => {
-    setNowPlayingW(w => clamp(w - delta, 220, 480));
+  const handleDetailsPanelDrag = useCallback((delta: number) => {
+    setDetailsPanelW(w => clamp(w - delta, 220, 480));
   }, []);
 
   // ─── Welcome screen ────────────────────────────────
@@ -486,10 +591,11 @@ function App() {
         onTrackSessionComplete={appendPlayHistory}
         onArtistClick={(artist) => { setFilterType('Artists'); setFilterValue(artist); }}
         onAlbumClick={(album)  => { setFilterType('Albums');  setFilterValue(album); }}
+        albumArtworkUrl={currentSong ? artworkCache.get(artworkCacheKey(currentSong.artist, currentSong.album)) : undefined}
+        artistAvatarUrl={currentSong ? (artistCache.get(artistCacheKey(currentSong.artist)) ?? artistCache.get(artistCacheKey(getCanonicalArtist(currentSong.artist, artistGroupOverrides)))) : undefined}
         seekRef={seekRef}
-        onTimeUpdate={handleTimeUpdate}
-        showNowPlaying={showNowPlaying}
-        onNowPlayingToggle={() => setShowNowPlaying(v => !v)}
+        showSongDetails={showSongDetails}
+        onSongDetailsToggle={() => setShowSongDetails(v => !v)}
       />
 
       <div className="flex flex-1 overflow-hidden">
@@ -507,8 +613,13 @@ function App() {
             historyItems={filteredHistoryItems}
             currentSong={currentSong}
             artistAvatars={artistCache}
+            albumArtworks={albumArtworks}
             artistGroupOverrides={artistGroupOverrides}
             onArtistGroupOverridesChange={handleArtistGroupOverridesChange}
+            userQueue={userQueue}
+            queueSongs={queueSongs}
+            onRemoveFromQueue={removeFromQueue}
+            onClearQueue={clearQueue}
             onPlayHistoryItem={playSong}
             onPlaylistsChange={setPlaylists}
           />
@@ -526,7 +637,7 @@ function App() {
           )}
           <div className="flex items-center px-4 py-1 bg-gray-50 dark:bg-[#1a1a1a] border-b border-gray-200 dark:border-gray-800 shrink-0">
             <span className="flex-1 text-xs text-gray-500">
-              {loadingStatus || (filterType === 'History' ? `${filteredHistoryItems.length} plays` : `${songs.length} songs`)}
+              {loadingStatus || (filterType === 'History' ? `${filteredHistoryItems.length} plays` : filterType === 'Queue' ? `${queueSongs.length} queued` : `${songs.length} songs`)}
             </span>
             <button
               onClick={() => setShowVisualizer(v => !v)}
@@ -552,34 +663,31 @@ function App() {
               setSortDirection(dir);
             }}
             onPlay={playSong}
+            onSelect={selectSong}
+            onAddToQueue={addToQueue}
             currentSongId={currentSong?.id}
+            selectedSongId={selectedSong?.id}
             contextSongId={currentQueueIndex >= 0 ? currentSong?.id : undefined}
             onRescan={() => doScan(dirHandle)}
           />
         </div>
 
-        {/* ── Now Playing pane ── */}
-        {showNowPlaying && currentSong && (
+        {/* ── Song Details pane ── */}
+        {showSongDetails && displaySong && (
           <>
-            <ResizeHandle onDrag={handleNowPlayingDrag} />
-            <div className="shrink-0 h-full" style={{ width: nowPlayingW }}>
-              <NowPlayingPane
-                song={currentSong}
-                currentTime={playerTime}
-                duration={playerDuration}
-                isPlaying={isPlaying}
-                shuffleOn={shuffleOn}
-                stats={currentSongStats}
+            <ResizeHandle onDrag={handleDetailsPanelDrag} />
+            <div className="shrink-0 h-full" style={{ width: detailsPanelW }}>
+              <SongDetailsPane
+                song={displaySong}
+                isCurrentSong={displaySong.id === currentSong?.id}
+                stats={displaySongStats}
                 playlists={playlists}
-                artworkUrl={artworkCache.get(artworkCacheKey(currentSong.artist, currentSong.album))}
+                artworkUrl={artworkCache.get(artworkCacheKey(displaySong.artist, displaySong.album))}
                 onArtworkFound={handleArtworkFound}
-                artistUrl={artistCache.get(artistCacheKey(currentSong.artist))}
+                artistUrl={artistCache.get(artistCacheKey(displaySong.artist)) ?? artistCache.get(artistCacheKey(getCanonicalArtist(displaySong.artist, artistGroupOverrides)))}
                 onArtistImageFound={handleArtistImageFound}
-                onSeek={(t) => seekRef.current?.(t)}
-                onPlayPause={() => setIsPlaying(v => !v)}
-                onNext={nextSong}
-                onPrev={prevSong}
-                onShuffleToggle={() => setShuffleOn(s => !s)}
+                onPlay={() => playSong(displaySong)}
+                onAddToQueue={() => addToQueue(displaySong)}
                 onAddToPlaylist={(songId, playlistId) => {
                   setPlaylists(prev => prev.map(p => p.id === playlistId ? { ...p, songIds: p.songIds.includes(songId) ? p.songIds : [...p.songIds, songId] } : p));
                 }}

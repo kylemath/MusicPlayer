@@ -75,7 +75,7 @@ export interface HistoryViewItem {
   stats?: SongPlayStats;
 }
 
-export type FilterType = 'All' | 'Artists' | 'Albums' | 'Playlist' | 'History';
+export type FilterType = 'All' | 'Artists' | 'Albums' | 'Playlist' | 'Queue' | 'History';
 
 export interface LibraryState {
   songs: Song[];

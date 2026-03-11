@@ -23,11 +23,12 @@ interface PlayerProps {
   onTrackSessionComplete?: (entry: Omit<PlayHistoryEntry, 'id'>) => void;
   onArtistClick?: (artist: string) => void;
   onAlbumClick?: (album: string) => void;
-  // NowPlaying pane wiring
+  albumArtworkUrl?: string;
+  artistAvatarUrl?: string;
   seekRef?: React.MutableRefObject<((time: number) => void) | null>;
   onTimeUpdate?: (currentTime: number, duration: number) => void;
-  showNowPlaying?: boolean;
-  onNowPlayingToggle?: () => void;
+  showSongDetails?: boolean;
+  onSongDetailsToggle?: () => void;
 }
 
 // ─── EQ definitions ──────────────────────────────────
@@ -66,10 +67,12 @@ export function Player({
   onTrackSessionComplete,
   onArtistClick,
   onAlbumClick,
+  albumArtworkUrl,
+  artistAvatarUrl,
   seekRef,
   onTimeUpdate,
-  showNowPlaying,
-  onNowPlayingToggle,
+  showSongDetails,
+  onSongDetailsToggle,
 }: PlayerProps) {
   const audioRef    = useRef<HTMLAudioElement>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -320,31 +323,36 @@ export function Player({
 
       {/* ── Center LCD ── */}
       <div className="flex-1 flex justify-center max-w-xl">
-        <div className="bg-[#e4e4e4] dark:bg-[#282828] border border-gray-300 dark:border-black rounded w-full h-14 flex flex-col justify-center px-4 relative overflow-hidden shadow-inner">
+        <div className="bg-[#e4e4e4] dark:bg-[#282828] border border-gray-300 dark:border-black rounded w-full h-14 flex items-center px-2 relative overflow-hidden shadow-inner">
           {currentSong ? (
             <>
-              <div className="text-center font-medium text-sm truncate px-12">
-                {currentSong.title}
+              {/* Album art thumbnail */}
+              <div className="shrink-0 w-10 h-10 rounded overflow-hidden bg-gray-300 dark:bg-gray-700 mr-2">
+                {albumArtworkUrl ? (
+                  <img src={albumArtworkUrl} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-gray-400 text-[8px]">&#9835;</div>
+                )}
               </div>
-              <div className="flex items-center justify-center gap-1 text-xs text-gray-500 dark:text-gray-400 truncate px-12">
-                <button
-                  type="button"
-                  className="truncate max-w-[45%] hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-                  onClick={() => onArtistClick?.(currentSong.artist)}
-                >
-                  {currentSong.artist}
-                </button>
-                <span className="shrink-0">-</span>
-                <button
-                  type="button"
-                  className="truncate max-w-[45%] hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-                  onClick={() => onAlbumClick?.(currentSong.album)}
-                >
-                  {currentSong.album}
-                </button>
+              {/* Artist avatar */}
+              <div className="shrink-0 w-7 h-7 rounded-full overflow-hidden bg-gray-300 dark:bg-gray-600 mr-2">
+                {artistAvatarUrl ? (
+                  <img src={artistAvatarUrl} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-[9px] font-bold text-gray-400">{currentSong.artist.charAt(0).toUpperCase()}</div>
+                )}
+              </div>
+              {/* Title + artist/album text */}
+              <div className="flex-1 min-w-0 flex flex-col justify-center pr-10">
+                <div className="font-medium text-sm truncate">{currentSong.title}</div>
+                <div className="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400 truncate">
+                  <button type="button" className="truncate max-w-[45%] hover:text-blue-600 dark:hover:text-blue-400 transition-colors" onClick={() => onArtistClick?.(currentSong.artist)}>{currentSong.artist}</button>
+                  <span className="shrink-0">-</span>
+                  <button type="button" className="truncate max-w-[45%] hover:text-blue-600 dark:hover:text-blue-400 transition-colors" onClick={() => onAlbumClick?.(currentSong.album)}>{currentSong.album}</button>
+                </div>
               </div>
 
-              <div className="absolute bottom-1 left-4 text-[10px] text-gray-500">{fmt(currentTime)}</div>
+              <div className="absolute bottom-1 left-14 text-[10px] text-gray-500">{fmt(currentTime)}</div>
               <div className="absolute bottom-1 right-4 text-[10px] text-gray-500">-{fmt(duration - currentTime)}</div>
 
               {/* Playlist button */}
@@ -422,19 +430,18 @@ export function Player({
       {/* ── EQ · Volume · Now Playing · Logo ── */}
       <div className="flex items-center justify-end gap-2 w-1/4">
 
-        {/* Now Playing pane toggle */}
+        {/* Song Details pane toggle */}
         <button
           type="button"
-          onClick={onNowPlayingToggle}
-          disabled={!currentSong}
-          className={`px-2 py-1 text-xs rounded border transition-colors disabled:opacity-40 disabled:cursor-default ${
-            showNowPlaying
+          onClick={onSongDetailsToggle}
+          className={`px-2 py-1 text-xs rounded border transition-colors ${
+            showSongDetails
               ? 'border-blue-500 bg-blue-500/10 text-blue-600 dark:text-blue-400'
               : 'border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800'
           }`}
-          title="Toggle Now Playing panel"
+          title="Toggle Song Details panel"
         >
-          Now Playing
+          Song Details
         </button>
 
         {/* Equalizer */}

@@ -1,30 +1,22 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { Play, Pause, SkipBack, SkipForward, Shuffle, ListPlus, Search, Music, Plus } from 'lucide-react';
+import { Play, ListPlus, ListOrdered, Search, Music, Plus } from 'lucide-react';
 import type { Song, SongPlayStats } from '../types';
 import type { AlbumArtworkResult } from '../lib/artwork';
 import { searchAlbumArtwork } from '../lib/artwork';
 
 interface PlaylistItem { id: string; name: string; songIds: string[]; }
 
-interface NowPlayingProps {
+interface SongDetailsPaneProps {
   song: Song;
-  currentTime: number;
-  duration: number;
-  isPlaying: boolean;
-  shuffleOn: boolean;
+  isCurrentSong: boolean;
   stats?: SongPlayStats;
   playlists: PlaylistItem[];
-  // Artwork — parent owns persistence; we drive display from this prop.
   artworkUrl?: string;
   onArtworkFound: (artist: string, album: string, result: AlbumArtworkResult) => Promise<string>;
-  // Artist avatar
   artistUrl?: string;
   onArtistImageFound: (artist: string) => Promise<string>;
-  onSeek: (time: number) => void;
-  onPlayPause: () => void;
-  onNext: () => void;
-  onPrev: () => void;
-  onShuffleToggle: () => void;
+  onPlay: () => void;
+  onAddToQueue: () => void;
   onAddToPlaylist: (songId: string, playlistId: string) => void;
   onCreatePlaylistAndAdd: (songId: string, name: string) => void;
   onArtistClick: (artist: string) => void;
@@ -60,20 +52,15 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-export function NowPlayingPane({
-  song, currentTime, duration, isPlaying, shuffleOn,
-  stats, playlists, artworkUrl, onArtworkFound,
-  artistUrl, onArtistImageFound,
-  onSeek, onPlayPause, onNext, onPrev,
-  onShuffleToggle, onAddToPlaylist, onCreatePlaylistAndAdd,
+export function SongDetailsPane({
+  song, isCurrentSong, stats, playlists,
+  artworkUrl, onArtworkFound, artistUrl, onArtistImageFound,
+  onPlay, onAddToQueue, onAddToPlaylist, onCreatePlaylistAndAdd,
   onArtistClick, onAlbumClick,
-}: NowPlayingProps) {
-  // displayUrl is the resolved object URL — seeded from cache prop, updated on search.
+}: SongDetailsPaneProps) {
   const [displayUrl, setDisplayUrl] = useState<string | undefined>(artworkUrl);
   const [artworkLoading, setArtworkLoading] = useState(false);
   const [artworkError, setArtworkError] = useState<string | null>(null);
-
-  // Artist avatar state
   const [artistDisplayUrl, setArtistDisplayUrl] = useState<string | undefined>(artistUrl);
   const [artistLoading, setArtistLoading] = useState(false);
   const [artistError, setArtistError] = useState<string | null>(null);
@@ -81,7 +68,6 @@ export function NowPlayingPane({
   const [newName, setNewName] = useState('');
   const playlistRef = useRef<HTMLDivElement>(null);
 
-  // Sync with cached artwork/avatar whenever the song or parent-supplied URLs change.
   useEffect(() => {
     setDisplayUrl(artworkUrl);
     setArtworkError(null);
@@ -95,9 +81,7 @@ export function NowPlayingPane({
   useEffect(() => {
     if (!playlistOpen) return;
     const handler = (e: MouseEvent) => {
-      if (playlistRef.current && !playlistRef.current.contains(e.target as Node)) {
-        setPlaylistOpen(false);
-      }
+      if (playlistRef.current && !playlistRef.current.contains(e.target as Node)) setPlaylistOpen(false);
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -108,8 +92,6 @@ export function NowPlayingPane({
     setArtworkError(null);
     try {
       const result = await searchAlbumArtwork(song.album, song.artist);
-      // Parent saves to IndexedDB, creates an object URL, and propagates to all
-      // other songs from the same album. We get back the durable object URL.
       const savedUrl = await onArtworkFound(song.artist, song.album, result);
       setDisplayUrl(savedUrl);
     } catch (e) {
@@ -118,7 +100,6 @@ export function NowPlayingPane({
       setArtworkLoading(false);
     }
   }, [song.album, song.artist, onArtworkFound]);
-
 
   const lookupArtistImage = useCallback(async () => {
     if (artistLoading) return;
@@ -134,7 +115,6 @@ export function NowPlayingPane({
     }
   }, [song.artist, onArtistImageFound, artistLoading]);
 
-  const pct = duration > 0 ? (currentTime / duration) * 100 : 0;
   const bitrate = song.bitrate ? `${Math.round(song.bitrate / 1000)} kbps` : undefined;
   const sampleRate = song.sampleRate ? `${(song.sampleRate / 1000).toFixed(1)} kHz` : undefined;
   const trackStr = song.trackNumber != null
@@ -149,150 +129,97 @@ export function NowPlayingPane({
   return (
     <div className="flex flex-col h-full bg-[#f5f5f5] dark:bg-[#111] border-l border-gray-200 dark:border-gray-800 overflow-hidden">
 
-      {/* ── Artwork square ───────────────────────────────────── */}
+      {/* ── Artwork square ── */}
       <div className="relative shrink-0 bg-black overflow-hidden" style={{ paddingBottom: '100%' }}>
         <div className="absolute inset-0">
           {displayUrl ? (
-            <img
-              src={displayUrl}
-              alt="Album artwork"
-              className="w-full h-full object-cover"
-            />
+            <img src={displayUrl} alt="Album artwork" className="w-full h-full object-cover" />
           ) : (
             <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-b from-gray-800 to-gray-900 select-none">
               <Music size={40} className="text-gray-600 mb-2" />
-              <span className="text-[10px] text-gray-600 text-center px-4 leading-tight">
-                {song.album}
-              </span>
+              <span className="text-[10px] text-gray-600 text-center px-4 leading-tight">{song.album}</span>
             </div>
           )}
-
-          {/* Artwork action buttons */}
           <div className="absolute bottom-2 left-2 right-2 flex gap-1.5 justify-end">
             <button
               type="button"
               onClick={searchArt}
               disabled={artworkLoading}
-              title="Search artwork online (saves locally for future loads)"
+              title="Search artwork online"
               className="flex items-center gap-1 px-2 py-1 rounded bg-black/70 hover:bg-black/90 disabled:opacity-50 text-white text-[11px] backdrop-blur-sm"
             >
               <Search size={11} />
-              {artworkLoading ? '…' : displayUrl ? 'Retry' : 'Artwork'}
+              {artworkLoading ? '...' : displayUrl ? 'Retry' : 'Artwork'}
             </button>
           </div>
-
           {artworkError && (
-            <div className="absolute top-2 inset-x-2 text-[10px] text-red-300 bg-black/70 rounded px-2 py-1 text-center leading-tight">
-              {artworkError}
-            </div>
+            <div className="absolute top-2 inset-x-2 text-[10px] text-red-300 bg-black/70 rounded px-2 py-1 text-center leading-tight">{artworkError}</div>
           )}
         </div>
       </div>
 
-      {/* ── Title / artist / album ───────────────────────────── */}
+      {/* ── Title / artist / album ── */}
       <div className="shrink-0 px-3 pt-3 pb-1">
-        <div
-          className="font-semibold text-[15px] text-gray-900 dark:text-gray-100 leading-tight truncate"
-          title={song.title}
-        >
+        <div className="font-semibold text-[15px] text-gray-900 dark:text-gray-100 leading-tight truncate" title={song.title}>
           {song.title}
         </div>
         <div className="mt-1.5 flex items-center gap-2 min-w-0">
-          {/* Artist avatar — click to search/retry */}
           <button
             type="button"
             onClick={lookupArtistImage}
             disabled={artistLoading}
-            title={artistDisplayUrl ? `${song.artist} · click to update image` : `Find artist image for ${song.artist}`}
+            title={artistDisplayUrl ? `${song.artist} - click to refresh` : `Find image for ${song.artist}`}
             className="relative shrink-0 w-8 h-8 rounded-full overflow-hidden bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-[12px] font-bold text-gray-500 dark:text-gray-400 hover:ring-2 hover:ring-blue-500 transition disabled:opacity-60"
           >
             {artistDisplayUrl ? (
               <img src={artistDisplayUrl} alt={song.artist} className="w-full h-full object-cover" />
             ) : artistLoading ? (
-              <span className="animate-spin text-[10px]">↻</span>
+              <span className="animate-spin text-[10px]">&#x21bb;</span>
             ) : (
               song.artist.charAt(0).toUpperCase()
             )}
           </button>
-
           <div className="flex flex-wrap items-baseline gap-x-1 text-[12px] text-gray-500 dark:text-gray-400 min-w-0">
-            <button
-              type="button"
-              onClick={() => onArtistClick(song.artist)}
-              className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors truncate"
-            >
+            <button type="button" onClick={() => onArtistClick(song.artist)} className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors truncate">
               {song.artist}
             </button>
             {song.album && (
               <>
-                <span className="opacity-40">—</span>
-                <button
-                  type="button"
-                  onClick={() => onAlbumClick(song.album)}
-                  className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors truncate"
-                >
+                <span className="opacity-40">--</span>
+                <button type="button" onClick={() => onAlbumClick(song.album)} className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors truncate">
                   {song.album}
                 </button>
               </>
             )}
           </div>
         </div>
-
-        {artistError && (
-          <div className="mt-1 text-[10px] text-red-500 dark:text-red-400 leading-tight">{artistError}</div>
-        )}
+        {artistError && <div className="mt-1 text-[10px] text-red-500 dark:text-red-400 leading-tight">{artistError}</div>}
       </div>
 
-      {/* ── Progress bar ─────────────────────────────────────── */}
-      <div className="shrink-0 px-3 pb-2">
-        <div className="relative h-[3px] bg-gray-300 dark:bg-gray-700 rounded-full overflow-visible mt-1 mb-1">
-          <div className="h-full bg-blue-500 rounded-full" style={{ width: `${pct}%` }} />
-          <input
-            type="range"
-            min={0}
-            max={duration || 100}
-            value={currentTime}
-            onChange={(e) => onSeek(Number(e.target.value))}
-            step="0.1"
-            className="absolute inset-x-0 -top-2 h-6 opacity-0 cursor-pointer w-full"
-          />
-        </div>
-        <div className="flex justify-between text-[10px] text-gray-400 dark:text-gray-500 tabular-nums">
-          <span>{fmt(currentTime)}</span>
-          <span>-{fmt(duration - currentTime)}</span>
-        </div>
-      </div>
-
-      {/* ── Transport + playlist ─────────────────────────────── */}
-      <div className="shrink-0 px-3 pb-3 flex items-center justify-center gap-1.5">
+      {/* ── Action buttons: Play, Add to Queue, Add to Playlist ── */}
+      <div className="shrink-0 px-3 py-2 flex items-center gap-1.5">
         <button
           type="button"
-          onClick={onShuffleToggle}
-          title="Shuffle"
-          className={`p-1.5 rounded transition-colors ${
-            shuffleOn
-              ? 'text-blue-600 dark:text-blue-400 bg-blue-500/15'
-              : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white hover:bg-gray-200 dark:hover:bg-gray-800'
+          onClick={onPlay}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+            isCurrentSong
+              ? 'bg-blue-600/20 text-blue-600 dark:text-blue-400 border border-blue-500/30'
+              : 'bg-blue-600 hover:bg-blue-700 text-white'
           }`}
         >
-          <Shuffle size={15} />
-        </button>
-        <button type="button" onClick={onPrev} className="p-1.5 text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white rounded hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors">
-          <SkipBack size={18} fill="currentColor" />
+          <Play size={14} fill="currentColor" />
+          {isCurrentSong ? 'Playing' : 'Play'}
         </button>
         <button
           type="button"
-          onClick={onPlayPause}
-          className="w-9 h-9 rounded-full bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center shadow-sm transition-colors"
+          onClick={onAddToQueue}
+          title="Add to queue"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
         >
-          {isPlaying ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" className="ml-0.5" />}
+          <ListOrdered size={14} />
+          Queue
         </button>
-        <button type="button" onClick={onNext} className="p-1.5 text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white rounded hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors">
-          <SkipForward size={18} fill="currentColor" />
-        </button>
-
-        {/* Playlist */}
-        <div className="relative ml-1" ref={playlistRef}>
+        <div className="relative ml-auto" ref={playlistRef}>
           <button
             type="button"
             onClick={() => setPlaylistOpen(v => !v)}
@@ -303,46 +230,21 @@ export function NowPlayingPane({
           </button>
           {playlistOpen && (
             <div className="absolute bottom-full right-0 mb-2 w-52 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl py-1 z-50">
-              <div className="px-3 py-1.5 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700">
-                Add to playlist
-              </div>
+              <div className="px-3 py-1.5 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-700">Add to playlist</div>
               {playlists.map(pl => (
-                <button
-                  key={pl.id}
-                  type="button"
-                  onClick={() => { onAddToPlaylist(song.id, pl.id); setPlaylistOpen(false); }}
-                  className="w-full text-left px-3 py-1.5 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
-                >
+                <button key={pl.id} type="button" onClick={() => { onAddToPlaylist(song.id, pl.id); setPlaylistOpen(false); }} className="w-full text-left px-3 py-1.5 text-sm text-gray-800 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700">
                   {pl.name}
                 </button>
               ))}
               <div className="px-2 pt-1 border-t border-gray-100 dark:border-gray-700">
                 <div className="flex gap-1">
                   <input
-                    type="text"
-                    value={newName}
-                    onChange={e => setNewName(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter' && newName.trim()) {
-                        onCreatePlaylistAndAdd(song.id, newName.trim());
-                        setNewName('');
-                        setPlaylistOpen(false);
-                      }
-                    }}
-                    placeholder="New playlist…"
+                    type="text" value={newName} onChange={e => setNewName(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter' && newName.trim()) { onCreatePlaylistAndAdd(song.id, newName.trim()); setNewName(''); setPlaylistOpen(false); } }}
+                    placeholder="New playlist..."
                     className="flex-1 min-w-0 px-2 py-1 text-xs border border-gray-200 dark:border-gray-600 rounded bg-white dark:bg-gray-700"
                   />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (newName.trim()) {
-                        onCreatePlaylistAndAdd(song.id, newName.trim());
-                        setNewName('');
-                        setPlaylistOpen(false);
-                      }
-                    }}
-                    className="p-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white"
-                  >
+                  <button type="button" onClick={() => { if (newName.trim()) { onCreatePlaylistAndAdd(song.id, newName.trim()); setNewName(''); setPlaylistOpen(false); } }} className="p-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white">
                     <Plus size={12} />
                   </button>
                 </div>
@@ -352,7 +254,7 @@ export function NowPlayingPane({
         </div>
       </div>
 
-      {/* ── Metadata table ───────────────────────────────────── */}
+      {/* ── Metadata table ── */}
       <div className="flex-1 overflow-y-auto border-t border-gray-200 dark:border-gray-800 px-3 pb-4">
         <Section title="Identity">
           <Row label="Title" value={song.title} />
@@ -402,9 +304,7 @@ export function NowPlayingPane({
 
         {song.lyrics && (
           <Section title="Lyrics">
-            <div className="text-[11px] text-gray-600 dark:text-gray-400 whitespace-pre-line leading-relaxed mt-1">
-              {song.lyrics}
-            </div>
+            <div className="text-[11px] text-gray-600 dark:text-gray-400 whitespace-pre-line leading-relaxed mt-1">{song.lyrics}</div>
           </Section>
         )}
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FilterType, HistoryViewItem, Song } from '../types';
-import { Mic2, Disc, Library as LibIcon, Search, ListMusic, Plus, History, Sparkles, X, ChevronDown, ChevronRight } from 'lucide-react';
+import { Mic2, Disc, Library as LibIcon, Search, ListMusic, Plus, History, Sparkles, X, ChevronDown, ChevronRight, ListOrdered, Trash2 } from 'lucide-react';
 import { buildArtistGroups, buildGroupingPrompt, parseLLMOverrides, getCanonicalArtist, artistGroupKey } from '../lib/artistNorm';
 
 interface PlaylistItem { id: string; name: string; songIds: string[]; }
@@ -35,8 +35,13 @@ interface SidebarProps {
   historyItems: HistoryViewItem[];
   currentSong: Song | null;
   artistAvatars?: Map<string, string>;
+  albumArtworks?: Map<string, string>;
   artistGroupOverrides: Record<string, string>;
   onArtistGroupOverridesChange: (overrides: Record<string, string>) => void;
+  userQueue: string[];
+  queueSongs: Song[];
+  onRemoveFromQueue: (index: number) => void;
+  onClearQueue: () => void;
   onPlayHistoryItem: (song: Song) => void;
   onPlaylistsChange: (updater: (prev: PlaylistItem[]) => PlaylistItem[]) => void;
 }
@@ -44,7 +49,8 @@ interface SidebarProps {
 export function Sidebar({
   songs, filterType, setFilterType, filterValue, setFilterValue,
   searchQuery, onSearchChange, playlists, historyItems, currentSong,
-  artistAvatars, artistGroupOverrides, onArtistGroupOverridesChange,
+  artistAvatars, albumArtworks, artistGroupOverrides, onArtistGroupOverridesChange,
+  userQueue, queueSongs, onRemoveFromQueue, onClearQueue,
   onPlayHistoryItem, onPlaylistsChange,
 }: SidebarProps) {
   const [newPlaylistName, setNewPlaylistName] = useState('');
@@ -185,6 +191,19 @@ export function Sidebar({
         <MenuItem icon={Mic2} label="Artists" active={filterType === 'Artists'} onClick={() => { setFilterType('Artists'); setFilterValue(''); }} />
         <MenuItem icon={Disc} label="Albums" active={filterType === 'Albums'} onClick={() => { setFilterType('Albums'); setFilterValue(''); }} />
         <MenuItem icon={ListMusic} label="Playlists" active={filterType === 'Playlist'} onClick={() => { setFilterType('Playlist'); setFilterValue(''); }} />
+        <div
+          className={`flex items-center gap-3 px-4 py-2 cursor-pointer transition-colors text-sm
+            ${filterType === 'Queue' ? 'bg-blue-600 text-white font-medium' : 'hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'}`}
+          onClick={() => { setFilterType('Queue'); setFilterValue(''); }}
+        >
+          <ListOrdered size={18} className={filterType === 'Queue' ? 'text-white' : 'text-gray-500 dark:text-gray-400'} />
+          Queue
+          {userQueue.length > 0 && (
+            <span className={`ml-auto text-[10px] px-1.5 rounded-full ${filterType === 'Queue' ? 'bg-white/20 text-white' : 'bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-400'}`}>
+              {userQueue.length}
+            </span>
+          )}
+        </div>
         <MenuItem icon={History} label="History" active={filterType === 'History'} onClick={() => { setFilterType('History'); setFilterValue(''); }} />
 
         {/* ── Artist list ── */}
@@ -248,26 +267,42 @@ export function Sidebar({
 
         {/* ── Album list ── */}
         {filterType === 'Albums' && (
-          <div ref={albumListRef} className="mt-6 flex flex-col">
-            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 px-4">All Albums</div>
-            {albums.map(a => (
-              <div
-                ref={(el) => { albumItemRefs.current[a] = el; }}
-                key={a}
-                className={`px-8 py-1 text-sm cursor-pointer truncate transition-colors ${
-                  filterValue === a && currentSong?.album === a
-                    ? 'bg-violet-600 text-white font-medium'
-                    : filterValue === a
-                      ? 'bg-blue-600 text-white'
-                      : currentSong?.album === a
-                        ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-l-2 border-emerald-500'
-                        : 'hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
-                }`}
-                onClick={() => setFilterValue(a)}
-              >
-                {a}
-              </div>
-            ))}
+          <div ref={albumListRef} className="mt-4 flex flex-col">
+            <div className="px-4 mb-2">
+              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                Albums
+                <span className="ml-1.5 font-normal normal-case text-gray-400">({albums.length})</span>
+              </span>
+            </div>
+            {albums.map(a => {
+              const isSelected = filterValue === a;
+              const isPlaying = currentSong?.album === a;
+              const thumbUrl = albumArtworks?.get(a);
+              return (
+                <div
+                  ref={(el) => { albumItemRefs.current[a] = el; }}
+                  key={a}
+                  className={`pl-3 pr-4 py-1 text-sm cursor-pointer transition-colors flex items-center gap-2 min-w-0 ${
+                    isSelected && isPlaying
+                      ? 'bg-violet-600 text-white font-medium'
+                      : isSelected
+                        ? 'bg-blue-600 text-white'
+                        : isPlaying
+                          ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-l-2 border-emerald-500'
+                          : 'hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
+                  }`}
+                  onClick={() => setFilterValue(a)}
+                >
+                  <div className="w-6 h-6 rounded shrink-0 overflow-hidden bg-gray-300 dark:bg-gray-600 flex items-center justify-center text-[10px] text-gray-500 dark:text-gray-400">
+                    {thumbUrl
+                      ? <img src={thumbUrl} alt={a} className="w-full h-full object-cover" />
+                      : <Disc size={12} />
+                    }
+                  </div>
+                  <span className="truncate flex-1">{a}</span>
+                </div>
+              );
+            })}
           </div>
         )}
 
@@ -302,6 +337,45 @@ export function Sidebar({
                 {pl.name} <span className="text-xs opacity-70">({pl.songIds.length})</span>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* ── Queue list ── */}
+        {filterType === 'Queue' && (
+          <div className="mt-6 flex flex-col">
+            <div className="flex items-center justify-between px-4 mb-2">
+              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Up Next</span>
+              {queueSongs.length > 0 && (
+                <button
+                  type="button"
+                  onClick={onClearQueue}
+                  className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] rounded border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-red-400 hover:text-red-500 transition-colors"
+                  title="Clear queue"
+                >
+                  <Trash2 size={10} />
+                  Clear
+                </button>
+              )}
+            </div>
+            {queueSongs.length > 0 ? queueSongs.map((song, i) => (
+              <div key={`${song.id}-${i}`} className="flex items-center gap-2 pl-4 pr-2 py-1 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors group">
+                <span className="text-[10px] text-gray-400 w-4 shrink-0 text-right">{i + 1}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm truncate text-gray-800 dark:text-gray-200">{song.title}</div>
+                  <div className="text-[11px] truncate text-gray-500 dark:text-gray-400">{song.artist}</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onRemoveFromQueue(i)}
+                  title="Remove from queue"
+                  className="p-1 rounded opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            )) : (
+              <div className="px-4 py-2 text-sm text-gray-500 dark:text-gray-400">Queue is empty.</div>
+            )}
           </div>
         )}
 
