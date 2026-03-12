@@ -76,6 +76,13 @@ export interface HistoryViewItem {
 }
 
 export type FilterType = 'All' | 'Artists' | 'Albums' | 'Playlist' | 'Queue' | 'History';
+export type RepeatMode = 'off' | 'one' | 'context';
+
+export interface PlaybackPreferences {
+  shuffleOn: boolean;
+  repeatMode: RepeatMode;
+  showSongDetails: boolean;
+}
 
 export interface LibraryState {
   songs: Song[];

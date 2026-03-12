@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import type { FilterType, HistorySortColumn, HistoryViewItem, PlayHistoryEntry, PlayHistoryState, Song, SongSortColumn, SortDirection } from './types';
-import { getDirectoryHandle, saveDirectoryHandle, getSongsCache, saveSongsCache, getPlaylists, savePlaylists, getPlayHistory, savePlayHistory, getArtworkBlob, saveArtworkBlob, getArtistUrl, saveArtistUrl, getArtistGroupOverrides, saveArtistGroupOverrides, getQueue, saveQueue } from './db';
+import type { FilterType, HistorySortColumn, HistoryViewItem, PlayHistoryEntry, PlayHistoryState, RepeatMode, Song, SongSortColumn, SortDirection } from './types';
+import { getDirectoryHandle, saveDirectoryHandle, getSongsCache, saveSongsCache, getPlaylists, savePlaylists, getPlayHistory, savePlayHistory, getArtworkBlob, saveArtworkBlob, getArtistUrl, saveArtistUrl, getArtistGroupOverrides, saveArtistGroupOverrides, getQueue, saveQueue, getPlaybackPreferences, savePlaybackPreferences } from './db';
 import { getCanonicalArtist, artistGroupKey } from './lib/artistNorm';
 import type { AlbumArtworkResult } from './lib/artwork';
 import { searchArtistImage, searchAlbumArtwork } from './lib/artwork';
@@ -20,6 +20,21 @@ function shuffleArray<T>(arr: T[]): T[] {
     [out[i], out[j]] = [out[j], out[i]];
   }
   return out;
+}
+
+function buildShuffledSongIds(songs: Song[], anchorSongId?: string, avoidFirstSongId?: string): string[] {
+  const ids = songs.map(song => song.id);
+  if (ids.length <= 1) return ids;
+  if (anchorSongId && ids.includes(anchorSongId)) {
+    const rest = shuffleArray(ids.filter(id => id !== anchorSongId));
+    return [anchorSongId, ...rest];
+  }
+  const shuffled = shuffleArray(ids);
+  if (avoidFirstSongId && shuffled.length > 1 && shuffled[0] === avoidFirstSongId) {
+    const swapIndex = 1 + Math.floor(Math.random() * (shuffled.length - 1));
+    [shuffled[0], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[0]];
+  }
+  return shuffled;
 }
 
 function clamp(val: number, min: number, max: number) {
@@ -55,16 +70,18 @@ function App() {
   const [historySortColumn, setHistorySortColumn] = useState<HistorySortColumn>('playedAt');
   const [historySortDirection, setHistorySortDirection] = useState<SortDirection>('desc');
   const [shuffleOn, setShuffleOn] = useState(false);
+  const [repeatMode, setRepeatMode] = useState<RepeatMode>('off');
   const [playlists, setPlaylistsState] = useState<{ id: string; name: string; songIds: string[] }[]>([]);
   const [playHistory, setPlayHistoryState] = useState<PlayHistoryState>({ entries: [], stats: {} });
   const [artistGroupOverrides, setArtistGroupOverridesState] = useState<Record<string, string>>({});
 
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
   const [showVisualizer, setShowVisualizer] = useState(true);
-  const [showSongDetails, setShowSongDetails] = useState(false);
+  const [showSongDetails, setShowSongDetails] = useState(true);
   const [isVizMaximized, setIsVizMaximized] = useState(false);
 
   const seekRef = useRef<((time: number) => void) | null>(null);
+  const shuffleCycleRef = useRef<{ contextKey: string; order: string[] }>({ contextKey: '', order: [] });
 
   // ─── Artwork cache ────────────────────────────────────────────────────────
   // In-memory map: "${artist}::${album}" -> object URL (created from Blob).
@@ -89,60 +106,6 @@ function App() {
   const [detailsPanelW, setDetailsPanelW] = useState(280);
 
   const abortRef = useRef<AbortController | null>(null);
-
-  useEffect(() => {
-    async function init() {
-      const handle = await getDirectoryHandle();
-      if (handle) {
-        setDirHandle(handle);
-        const perm = await (handle as any).queryPermission({ mode: 'read' });
-        if (perm === 'granted') {
-          setHasPermission(true);
-          const cache = await getSongsCache();
-          if (cache && cache.length > 0) {
-            setSongs(cache);
-          } else {
-            await doScan(handle);
-          }
-        }
-      }
-      const list = await getPlaylists();
-      setPlaylistsState(list);
-      const history = await getPlayHistory();
-      setPlayHistoryState(history);
-      const overrides = await getArtistGroupOverrides();
-      setArtistGroupOverridesState(overrides);
-      const q = await getQueue();
-      setUserQueueState(q);
-    }
-    init();
-  }, []);
-
-  const requestPermission = async () => {
-    if (!dirHandle) return;
-    const perm = await (dirHandle as any).requestPermission({ mode: 'read' });
-    if (perm === 'granted') {
-      setHasPermission(true);
-      const cache = await getSongsCache();
-      if (cache && cache.length > 0) {
-        setSongs(cache);
-      } else {
-        await doScan(dirHandle);
-      }
-    }
-  };
-
-  const selectFolder = async () => {
-    try {
-      const handle = await (window as any).showDirectoryPicker();
-      setDirHandle(handle);
-      await saveDirectoryHandle(handle);
-      setHasPermission(true);
-      await doScan(handle);
-    } catch (e) {
-      console.error(e);
-    }
-  };
 
   const doScan = useCallback(async (handle: FileSystemDirectoryHandle) => {
     abortRef.current?.abort();
@@ -185,8 +148,69 @@ function App() {
     }
   }, []);
 
-  const playSong = (song: Song) => { setCurrentSong(song); setSelectedSong(song); setIsPlaying(true); };
-  const selectSong = useCallback((song: Song) => { setSelectedSong(song); }, []);
+  useEffect(() => {
+    async function init() {
+      const handle = await getDirectoryHandle();
+      if (handle) {
+        setDirHandle(handle);
+        const perm = await (handle as any).queryPermission({ mode: 'read' });
+        if (perm === 'granted') {
+          setHasPermission(true);
+          const cache = await getSongsCache();
+          if (cache && cache.length > 0) {
+            setSongs(cache);
+          } else {
+            await doScan(handle);
+          }
+        }
+      }
+      const list = await getPlaylists();
+      setPlaylistsState(list);
+      const history = await getPlayHistory();
+      setPlayHistoryState(history);
+      const overrides = await getArtistGroupOverrides();
+      setArtistGroupOverridesState(overrides);
+      const q = await getQueue();
+      setUserQueueState(q);
+      const playbackPreferences = await getPlaybackPreferences();
+      setShuffleOn(playbackPreferences.shuffleOn);
+      setRepeatMode(playbackPreferences.repeatMode);
+      setShowSongDetails(playbackPreferences.showSongDetails);
+    }
+    init();
+  }, [doScan]);
+
+  useEffect(() => {
+    savePlaybackPreferences({ shuffleOn, repeatMode, showSongDetails });
+  }, [shuffleOn, repeatMode, showSongDetails]);
+
+  const requestPermission = async () => {
+    if (!dirHandle) return;
+    const perm = await (dirHandle as any).requestPermission({ mode: 'read' });
+    if (perm === 'granted') {
+      setHasPermission(true);
+      const cache = await getSongsCache();
+      if (cache && cache.length > 0) {
+        setSongs(cache);
+      } else {
+        await doScan(dirHandle);
+      }
+    }
+  };
+
+  const selectFolder = async () => {
+    try {
+      const handle = await (window as any).showDirectoryPicker();
+      setDirHandle(handle);
+      await saveDirectoryHandle(handle);
+      setHasPermission(true);
+      await doScan(handle);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const songMap = useMemo(() => new Map(songs.map(song => [song.id, song])), [songs]);
   const displaySong = selectedSong ?? currentSong;
 
   const historyItems = useMemo(() => {
@@ -253,9 +277,8 @@ function App() {
   }, [filteredHistoryItems, historySortColumn, historySortDirection]);
 
   const queueSongs = useMemo(() => {
-    const songMap = new Map(songs.map(s => [s.id, s]));
     return userQueue.map(id => songMap.get(id)).filter((s): s is Song => Boolean(s));
-  }, [songs, userQueue]);
+  }, [songMap, userQueue]);
 
   const songListForView = useMemo(() => {
     if (filterType === 'History') return sortedHistoryItems.map(item => item.song);
@@ -278,7 +301,7 @@ function App() {
     return list;
   }, [songs, filterType, filterValue, playlists, sortedHistoryItems]);
 
-  const queue = useMemo(() => {
+  const visibleSongs = useMemo(() => {
     let list = songListForView;
     if (searchQueryDebounced.trim()) {
       const q = searchQueryDebounced.trim().toLowerCase();
@@ -300,7 +323,7 @@ function App() {
       });
     }
     if (filterType === 'History' || filterType === 'Queue') return list;
-    const sorted = [...list].sort((a, b) => {
+    return [...list].sort((a, b) => {
       let va: string | number = (a as any)[sortColumn] ?? '';
       let vb: string | number = (b as any)[sortColumn] ?? '';
       if (sortColumn === 'duration') {
@@ -311,10 +334,57 @@ function App() {
       const cmp = va < vb ? -1 : va > vb ? 1 : 0;
       return sortDirection === 'asc' ? cmp : -cmp;
     });
-    return shuffleOn ? shuffleArray(sorted) : sorted;
-  }, [songListForView, searchQueryDebounced, sortColumn, sortDirection, shuffleOn, playlists, filterType]);
+  }, [songListForView, searchQueryDebounced, sortColumn, sortDirection, playlists, filterType]);
 
-  const currentQueueIndex = currentSong ? queue.findIndex(s => s.id === currentSong.id) : -1;
+  const playbackContextKey = useMemo(() => (
+    `${filterType}::${filterValue}::${searchQueryDebounced}::${sortColumn}::${sortDirection}::${visibleSongs.map(song => song.id).join('|')}`
+  ), [filterType, filterValue, searchQueryDebounced, sortColumn, sortDirection, visibleSongs]);
+
+  const syncShuffleCycle = useCallback((contextSongs: Song[], contextKey: string, options?: { anchorSongId?: string; avoidFirstSongId?: string }) => {
+    shuffleCycleRef.current = {
+      contextKey,
+      order: buildShuffledSongIds(contextSongs, options?.anchorSongId, options?.avoidFirstSongId),
+    };
+  }, []);
+
+  const ensureShuffleCycle = useCallback((anchorSongId?: string) => {
+    if (!shuffleOn) return [];
+    const current = shuffleCycleRef.current;
+    const visibleSongIds = new Set(visibleSongs.map(song => song.id));
+    const isValid =
+      current.contextKey === playbackContextKey &&
+      current.order.length === visibleSongs.length &&
+      current.order.every(id => visibleSongIds.has(id));
+    if (!isValid) {
+      syncShuffleCycle(visibleSongs, playbackContextKey, { anchorSongId });
+    }
+    return shuffleCycleRef.current.order;
+  }, [shuffleOn, visibleSongs, playbackContextKey, syncShuffleCycle]);
+
+  useEffect(() => {
+    if (!shuffleOn) {
+      shuffleCycleRef.current = { contextKey: '', order: [] };
+      return;
+    }
+    ensureShuffleCycle(currentSong?.id);
+  }, [shuffleOn, visibleSongs, playbackContextKey, currentSong?.id, ensureShuffleCycle]);
+
+  const playSong = useCallback((song: Song, options?: { source?: 'manual' | 'advance' }) => {
+    if (shuffleOn && options?.source !== 'advance') {
+      syncShuffleCycle(visibleSongs, playbackContextKey, { anchorSongId: song.id });
+    }
+    setCurrentSong(song);
+    setSelectedSong(song);
+    setIsPlaying(true);
+  }, [shuffleOn, visibleSongs, playbackContextKey, syncShuffleCycle]);
+
+  const playSongById = useCallback((songId: string, options?: { source?: 'manual' | 'advance' }) => {
+    const song = songMap.get(songId);
+    if (song) playSong(song, options);
+  }, [songMap, playSong]);
+
+  const selectSong = useCallback((song: Song) => { setSelectedSong(song); }, []);
+  const currentVisibleIndex = currentSong ? visibleSongs.findIndex(s => s.id === currentSong.id) : -1;
   const displaySongStats = displaySong ? playHistory.stats[displaySong.id] : undefined;
 
   const addToQueue = useCallback((song: Song) => {
@@ -338,15 +408,58 @@ function App() {
     saveQueue([]);
   }, []);
 
-  const nextSong = () => {
-    if (!currentSong || currentQueueIndex < 0) return;
-    if (currentQueueIndex < queue.length - 1) playSong(queue[currentQueueIndex + 1]);
-  };
+  const nextSong = useCallback(() => {
+    if (!currentSong) return;
+    if (shuffleOn) {
+      const order = ensureShuffleCycle(currentSong.id);
+      const currentIndex = order.indexOf(currentSong.id);
+      if (currentIndex < 0) return;
+      const nextSongId = order[currentIndex + 1];
+      if (nextSongId) {
+        playSongById(nextSongId, { source: 'advance' });
+        return;
+      }
+      if (repeatMode === 'context' && visibleSongs.length > 0) {
+        syncShuffleCycle(visibleSongs, playbackContextKey, { avoidFirstSongId: currentSong.id });
+        const restartSongId = shuffleCycleRef.current.order[0];
+        if (restartSongId) playSongById(restartSongId, { source: 'advance' });
+      }
+      return;
+    }
+    if (currentVisibleIndex < 0) return;
+    if (currentVisibleIndex < visibleSongs.length - 1) {
+      playSong(visibleSongs[currentVisibleIndex + 1], { source: 'advance' });
+      return;
+    }
+    if (repeatMode === 'context' && visibleSongs.length > 0) {
+      playSong(visibleSongs[0], { source: 'advance' });
+    }
+  }, [currentSong, shuffleOn, ensureShuffleCycle, playSongById, repeatMode, visibleSongs, playbackContextKey, currentVisibleIndex, playSong, syncShuffleCycle]);
 
-  const prevSong = () => {
-    if (!currentSong || currentQueueIndex < 0) return;
-    if (currentQueueIndex > 0) playSong(queue[currentQueueIndex - 1]);
-  };
+  const prevSong = useCallback(() => {
+    if (!currentSong) return;
+    if (shuffleOn) {
+      const order = ensureShuffleCycle(currentSong.id);
+      const currentIndex = order.indexOf(currentSong.id);
+      if (currentIndex < 0) return;
+      if (currentIndex > 0) {
+        playSongById(order[currentIndex - 1], { source: 'advance' });
+        return;
+      }
+      if (repeatMode === 'context' && order.length > 0) {
+        playSongById(order[order.length - 1], { source: 'advance' });
+      }
+      return;
+    }
+    if (currentVisibleIndex < 0) return;
+    if (currentVisibleIndex > 0) {
+      playSong(visibleSongs[currentVisibleIndex - 1], { source: 'advance' });
+      return;
+    }
+    if (repeatMode === 'context' && visibleSongs.length > 0) {
+      playSong(visibleSongs[visibleSongs.length - 1], { source: 'advance' });
+    }
+  }, [currentSong, shuffleOn, ensureShuffleCycle, playSongById, repeatMode, currentVisibleIndex, playSong, visibleSongs]);
 
   const setPlaylists = useCallback((next: (prev: typeof playlists) => typeof playlists) => {
     setPlaylistsState(prev => {
@@ -580,9 +693,12 @@ function App() {
         setIsPlaying={setIsPlaying}
         onNext={nextSong}
         onPrev={prevSong}
+        onTrackEnd={nextSong}
         onAnalyserReady={handleAnalyserReady}
         shuffleOn={shuffleOn}
         onShuffleToggle={() => setShuffleOn(s => !s)}
+        repeatMode={repeatMode}
+        onRepeatModeChange={setRepeatMode}
         playlists={playlists}
         onAddToPlaylist={(songId, playlistId) => {
           setPlaylists(prev => prev.map(p => p.id === playlistId ? { ...p, songIds: p.songIds.includes(songId) ? p.songIds : [...p.songIds, songId] } : p));
@@ -654,7 +770,7 @@ function App() {
             </button>
           </div>
           <Library
-            songs={queue}
+            songs={visibleSongs}
             historyItems={sortedHistoryItems}
             mode={filterType}
             sortColumn={filterType === 'History' ? historySortColumn : sortColumn}
@@ -673,7 +789,7 @@ function App() {
             onAddToQueue={addToQueue}
             currentSongId={currentSong?.id}
             selectedSongId={selectedSong?.id}
-            contextSongId={currentQueueIndex >= 0 ? currentSong?.id : undefined}
+            contextSongId={currentVisibleIndex >= 0 ? currentSong?.id : undefined}
             onRescan={() => doScan(dirHandle)}
           />
         </div>

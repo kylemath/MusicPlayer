@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import type { PlayHistoryEntry, Song } from '../types';
-import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Shuffle, ListPlus, SlidersHorizontal } from 'lucide-react';
+import type { PlayHistoryEntry, RepeatMode, Song } from '../types';
+import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Shuffle, Repeat, Repeat1, ListPlus, SlidersHorizontal } from 'lucide-react';
 
 interface PlaylistItem {
   id: string;
@@ -14,9 +14,12 @@ interface PlayerProps {
   setIsPlaying: (playing: boolean) => void;
   onNext: () => void;
   onPrev: () => void;
+  onTrackEnd?: () => void;
   onAnalyserReady?: (analyser: AnalyserNode) => void;
   shuffleOn?: boolean;
   onShuffleToggle?: () => void;
+  repeatMode?: RepeatMode;
+  onRepeatModeChange?: (mode: RepeatMode) => void;
   playlists?: PlaylistItem[];
   onAddToPlaylist?: (songId: string, playlistId: string) => void;
   onCreatePlaylistAndAdd?: (songId: string, name: string) => void;
@@ -58,9 +61,12 @@ export function Player({
   setIsPlaying,
   onNext,
   onPrev,
+  onTrackEnd,
   onAnalyserReady,
   shuffleOn = false,
   onShuffleToggle,
+  repeatMode = 'off',
+  onRepeatModeChange,
   playlists = [],
   onAddToPlaylist,
   onCreatePlaylistAndAdd,
@@ -180,6 +186,22 @@ export function Player({
     if (audioRef.current) audioRef.current.volume = muted ? 0 : volume;
   }, [volume, muted]);
 
+  useEffect(() => {
+    if (!('mediaSession' in navigator)) return;
+
+    navigator.mediaSession.setActionHandler('play', () => setIsPlaying(true));
+    navigator.mediaSession.setActionHandler('pause', () => setIsPlaying(false));
+    navigator.mediaSession.setActionHandler('nexttrack', () => onNext());
+    navigator.mediaSession.setActionHandler('previoustrack', () => onPrev());
+
+    return () => {
+      navigator.mediaSession.setActionHandler('play', null);
+      navigator.mediaSession.setActionHandler('pause', null);
+      navigator.mediaSession.setActionHandler('nexttrack', null);
+      navigator.mediaSession.setActionHandler('previoustrack', null);
+    };
+  }, [onNext, onPrev, setIsPlaying]);
+
   // ── Playback event handlers ────────────────────────────────────────────────
   const handleTimeUpdate = () => {
     if (!audioRef.current) return;
@@ -230,6 +252,24 @@ export function Player({
     });
     session.reported = true;
   }, [onTrackSessionComplete]);
+
+  const handleTrackEnded = useCallback(() => {
+    reportActiveSession(durationRef.current || currentTimeRef.current);
+    if (repeatMode === 'one' && currentSong && audioRef.current) {
+      audioRef.current.currentTime = 0;
+      currentTimeRef.current = 0;
+      setCurrentTime(0);
+      activeSessionRef.current = {
+        songId: currentSong.id,
+        playedAt: Date.now(),
+        songDuration: durationRef.current || currentSong.duration || 0,
+        reported: false,
+      };
+      audioRef.current.play().catch(console.error);
+      return;
+    }
+    onTrackEnd?.();
+  }, [currentSong, onTrackEnd, repeatMode, reportActiveSession]);
 
   useEffect(() => {
     const prev = activeSessionRef.current;
@@ -304,6 +344,20 @@ export function Player({
           title="Shuffle"
         >
           <Shuffle size={20} />
+        </button>
+        <button
+          onClick={() => onRepeatModeChange?.(repeatMode === 'context' ? 'off' : 'context')}
+          className={`p-1.5 rounded transition ${repeatMode === 'context' ? 'text-blue-600 dark:text-blue-400 bg-blue-500/20' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white'}`}
+          title="Repeat current view"
+        >
+          <Repeat size={20} />
+        </button>
+        <button
+          onClick={() => onRepeatModeChange?.(repeatMode === 'one' ? 'off' : 'one')}
+          className={`p-1.5 rounded transition ${repeatMode === 'one' ? 'text-blue-600 dark:text-blue-400 bg-blue-500/20' : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white'}`}
+          title="Repeat current song"
+        >
+          <Repeat1 size={20} />
         </button>
         <button className="text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white transition" onClick={onPrev}>
           <SkipBack size={24} fill="currentColor" />
@@ -535,7 +589,7 @@ export function Player({
         ref={audioRef}
         onTimeUpdate={handleTimeUpdate}
         onLoadedMetadata={handleLoadedMetadata}
-        onEnded={() => { reportActiveSession(durationRef.current || currentTimeRef.current); onNext(); }}
+        onEnded={handleTrackEnded}
         crossOrigin="anonymous"
       />
     </div>

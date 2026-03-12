@@ -1,10 +1,11 @@
 import { get, set } from 'idb-keyval';
-import type { PlayHistoryState, Playlist } from './types';
+import type { PlaybackPreferences, PlayHistoryState, Playlist } from './types';
 
 const DIRECTORY_HANDLE_KEY = 'music_directory_handle';
 const SONGS_CACHE_KEY = 'music_songs_cache';
 const PLAYLISTS_KEY = 'music_playlists';
 const PLAY_HISTORY_KEY = 'music_play_history';
+const PLAYBACK_PREFERENCES_KEY = 'music_playback_preferences';
 
 export async function saveDirectoryHandle(handle: FileSystemDirectoryHandle) {
   await set(DIRECTORY_HANDLE_KEY, handle);
@@ -40,6 +41,19 @@ export async function getPlayHistory(): Promise<PlayHistoryState> {
 
 export async function savePlayHistory(history: PlayHistoryState) {
   await set(PLAY_HISTORY_KEY, history);
+}
+
+export async function getPlaybackPreferences(): Promise<PlaybackPreferences> {
+  const prefs = await get<PlaybackPreferences>(PLAYBACK_PREFERENCES_KEY);
+  return {
+    shuffleOn: prefs?.shuffleOn ?? false,
+    repeatMode: prefs?.repeatMode ?? 'off',
+    showSongDetails: prefs?.showSongDetails ?? true,
+  };
+}
+
+export async function savePlaybackPreferences(preferences: PlaybackPreferences): Promise<void> {
+  await set(PLAYBACK_PREFERENCES_KEY, preferences);
 }
 
 // ── Album artwork (stored as Blob, keyed per album) ─────────────────────────
