@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FilterType, HistoryViewItem, Song } from '../types';
-import { Mic2, Disc, Library as LibIcon, Search, ListMusic, Plus, History, Sparkles, X, ChevronDown, ChevronRight, ListOrdered, Trash2 } from 'lucide-react';
+import { Disc, Library as LibIcon, Search, ListMusic, Plus, History, Sparkles, X, ChevronDown, ChevronRight, ListOrdered, Trash2 } from 'lucide-react';
 import { buildArtistGroups, buildGroupingPrompt, parseLLMOverrides, getCanonicalArtist, artistGroupKey } from '../lib/artistNorm';
 
 interface PlaylistItem { id: string; name: string; songIds: string[]; }
@@ -55,6 +55,8 @@ export function Sidebar({
 }: SidebarProps) {
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [showNewPlaylist, setShowNewPlaylist] = useState(false);
+  /** When true, album column lists only albums that include the current track’s canonical artist. */
+  const [albumsCurrentArtistOnly, setAlbumsCurrentArtistOnly] = useState(false);
   const artistListRef = useRef<HTMLDivElement>(null);
   const albumListRef = useRef<HTMLDivElement>(null);
   const artistItemRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -82,23 +84,36 @@ export function Sidebar({
     return artistGroupKey(getCanonicalArtist(currentSong.artist, artistGroupOverrides));
   }, [currentSong, artistGroupOverrides]);
 
-  const albums = useMemo(() => {
+  const allAlbumsSorted = useMemo(() => {
     const set = new Set(songs.map(s => s.album));
     return Array.from(set).sort();
   }, [songs]);
 
-  // Scroll sidebar to current artist/album when switching views
+  const displayAlbums = useMemo(() => {
+    if (!albumsCurrentArtistOnly || !currentCanonicalArtistKey) return allAlbumsSorted;
+    const set = new Set<string>();
+    for (const s of songs) {
+      if (artistGroupKey(getCanonicalArtist(s.artist, artistGroupOverrides)) === currentCanonicalArtistKey) {
+        set.add(s.album);
+      }
+    }
+    return Array.from(set).sort();
+  }, [allAlbumsSorted, albumsCurrentArtistOnly, currentCanonicalArtistKey, songs, artistGroupOverrides]);
+
+  const showArtistAlbumColumns = filterType === 'All' || filterType === 'Artists' || filterType === 'Albums';
+
+  // Scroll sidebar to current artist/album when browsing columns
   useEffect(() => {
-    if (filterType !== 'Artists' || !currentCanonicalArtistKey) return;
+    if (!showArtistAlbumColumns || !currentCanonicalArtistKey) return;
     const el = artistItemRefs.current[currentCanonicalArtistKey];
     el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  }, [filterType, currentCanonicalArtistKey]);
+  }, [showArtistAlbumColumns, currentCanonicalArtistKey]);
 
   useEffect(() => {
-    if (filterType !== 'Albums' || !currentSong?.album) return;
+    if (!showArtistAlbumColumns || !currentSong?.album) return;
     const el = albumItemRefs.current[currentSong.album];
     el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  }, [filterType, currentSong?.album]);
+  }, [showArtistAlbumColumns, currentSong?.album]);
 
   const addPlaylist = () => {
     const name = newPlaylistName.trim();
@@ -170,26 +185,11 @@ export function Sidebar({
   const overrideEntries = Object.entries(artistGroupOverrides);
 
   return (
-    <div className="bg-[#f0f0f0] dark:bg-[#1e1e1e] flex flex-col overflow-hidden h-full">
-      {/* Search */}
-      <div className="shrink-0 p-2 border-b border-gray-200 dark:border-gray-700">
-        <div className="relative">
-          <Search size={16} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => onSearchChange(e.target.value)}
-            placeholder="Search… artist: album:"
-            className="w-full pl-8 pr-3 py-1.5 text-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-md text-gray-800 dark:text-gray-200 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
-          />
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-y-auto py-4">
+    <div className="relative bg-[#f0f0f0] dark:bg-[#1e1e1e] flex flex-col overflow-hidden h-full">
+      {/* Library shortcuts — fixed at top */}
+      <div className="shrink-0 py-2">
         <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 px-4">Library</div>
-        <MenuItem icon={LibIcon} label="Songs" active={filterType === 'All'} onClick={() => { setFilterType('All'); setFilterValue(''); }} />
-        <MenuItem icon={Mic2} label="Artists" active={filterType === 'Artists'} onClick={() => { setFilterType('Artists'); setFilterValue(''); }} />
-        <MenuItem icon={Disc} label="Albums" active={filterType === 'Albums'} onClick={() => { setFilterType('Albums'); setFilterValue(''); }} />
+        <MenuItem icon={LibIcon} label="All songs" active={filterType === 'All'} onClick={() => { setFilterType('All'); setFilterValue(''); }} />
         <MenuItem icon={ListMusic} label="Playlists" active={filterType === 'Playlist'} onClick={() => { setFilterType('Playlist'); setFilterValue(''); }} />
         <div
           className={`flex items-center gap-3 px-4 py-2 cursor-pointer transition-colors text-sm
@@ -205,110 +205,133 @@ export function Sidebar({
           )}
         </div>
         <MenuItem icon={History} label="History" active={filterType === 'History'} onClick={() => { setFilterType('History'); setFilterValue(''); }} />
+      </div>
 
-        {/* ── Artist list ── */}
-        {filterType === 'Artists' && (
-          <div ref={artistListRef} className="mt-4 flex flex-col">
-            <div className="flex items-center justify-between px-4 mb-2">
-              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                Artists
-                <span className="ml-1.5 font-normal normal-case text-gray-400">({artistGroups.length})</span>
-              </span>
-              <button
-                type="button"
-                onClick={() => { setShowAiModal(true); setAiResult(null); setAiError(null); }}
-                title="Group artists with AI"
-                className="flex items-center gap-1 px-1.5 py-0.5 text-[10px] rounded border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-violet-400 hover:text-violet-600 dark:hover:text-violet-400 transition-colors"
-              >
-                <Sparkles size={10} />
-                AI Group
-              </button>
-            </div>
+      {/* Search — fixed strip between library and scrolling lists */}
+      <div className="shrink-0 px-2 py-2 border-t border-b border-gray-200 dark:border-gray-700">
+        <div className="relative">
+          <Search size={16} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => onSearchChange(e.target.value)}
+            placeholder="Search… artist: album:"
+            className="w-full pl-8 pr-3 py-1.5 text-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-md text-gray-800 dark:text-gray-200 placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+        </div>
+      </div>
 
-            {artistGroups.map(group => {
-              const isSelected = artistGroupKey(filterValue) === group.key;
-              const isPlaying = currentCanonicalArtistKey === group.key;
-              const avatarUrl = artistAvatars?.get(group.key);
-              return (
-                <div
-                  ref={(el) => { artistItemRefs.current[group.key] = el; }}
-                  key={group.key}
-                  className={`pl-3 pr-4 py-1 text-sm cursor-pointer transition-colors flex items-center gap-2 min-w-0 ${
-                    isSelected && isPlaying
-                      ? 'bg-violet-600 text-white font-medium'
-                      : isSelected
-                        ? 'bg-blue-600 text-white'
-                        : isPlaying
-                          ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-l-2 border-emerald-500'
-                          : 'hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
-                  }`}
-                  onClick={() => setFilterValue(group.canonical)}
+      <div className="flex-1 min-h-0 flex flex-col">
+        {showArtistAlbumColumns ? (
+          <div className="flex flex-1 min-h-0 min-w-0">
+            <div
+              ref={artistListRef}
+              className="flex flex-col min-h-0 w-1/2 min-w-0 border-r border-gray-200 dark:border-gray-800 overflow-y-auto"
+            >
+              <div className="sticky top-0 z-[1] shrink-0 bg-[#f0f0f0] dark:bg-[#1e1e1e] border-b border-gray-200 dark:border-gray-700 px-1.5 py-1 flex items-center justify-between gap-1">
+                <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-tight truncate" title={`${artistGroups.length} artists`}>
+                  Artists ({artistGroups.length})
+                </span>
+                <button
+                  type="button"
+                  onClick={() => { setShowAiModal(true); setAiResult(null); setAiError(null); }}
+                  title="Group artists with AI"
+                  className="flex shrink-0 items-center gap-0.5 px-1 py-0.5 text-[9px] rounded border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-violet-400 hover:text-violet-600 dark:hover:text-violet-400 transition-colors"
                 >
-                  <div className="w-6 h-6 rounded-full shrink-0 overflow-hidden bg-gray-300 dark:bg-gray-600 flex items-center justify-center text-[10px] font-bold text-gray-500 dark:text-gray-400">
-                    {avatarUrl
-                      ? <img src={avatarUrl} alt={group.canonical} className="w-full h-full object-cover" />
-                      : group.canonical.charAt(0).toUpperCase()
-                    }
+                  <Sparkles size={9} />
+                  AI
+                </button>
+              </div>
+              {artistGroups.map(group => {
+                const isSelected = filterType === 'Artists' && artistGroupKey(filterValue) === group.key;
+                const isPlaying = Boolean(currentCanonicalArtistKey) && currentCanonicalArtistKey === group.key;
+                const avatarUrl = artistAvatars?.get(group.key);
+                return (
+                  <div
+                    ref={(el) => { artistItemRefs.current[group.key] = el; }}
+                    key={group.key}
+                    className={`pl-2 pr-1 py-0.5 text-[11px] cursor-pointer transition-colors flex items-center gap-1.5 min-w-0 ${
+                      isSelected && isPlaying
+                        ? 'bg-violet-600 text-white font-medium'
+                        : isSelected
+                          ? 'bg-blue-600 text-white'
+                          : isPlaying
+                            ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-l-2 border-emerald-500'
+                            : 'hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
+                    }`}
+                    onClick={() => { setFilterType('Artists'); setFilterValue(group.canonical); }}
+                  >
+                    <div className="w-5 h-5 rounded-full shrink-0 overflow-hidden bg-gray-300 dark:bg-gray-600 flex items-center justify-center text-[8px] font-bold text-gray-500 dark:text-gray-400">
+                      {avatarUrl
+                        ? <img src={avatarUrl} alt={group.canonical} className="w-full h-full object-cover" />
+                        : group.canonical.charAt(0).toUpperCase()
+                      }
+                    </div>
+                    <span className="truncate flex-1">{group.canonical}</span>
+                    {group.variantCount > 1 && (
+                      <span
+                        title={`${group.variantCount} artist name variants grouped`}
+                        className={`text-[8px] shrink-0 px-0.5 rounded-full ${isSelected || isPlaying ? 'bg-white/20 text-white' : 'bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-400'}`}
+                      >
+                        {group.variantCount}
+                      </span>
+                    )}
                   </div>
-                  <span className="truncate flex-1">{group.canonical}</span>
-                  {group.variantCount > 1 && (
-                    <span
-                      title={`${group.variantCount} artist name variants grouped`}
-                      className={`text-[9px] shrink-0 px-1 rounded-full ${isSelected || isPlaying ? 'bg-white/20 text-white' : 'bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-400'}`}
-                    >
-                      {group.variantCount}
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* ── Album list ── */}
-        {filterType === 'Albums' && (
-          <div ref={albumListRef} className="mt-4 flex flex-col">
-            <div className="px-4 mb-2">
-              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                Albums
-                <span className="ml-1.5 font-normal normal-case text-gray-400">({albums.length})</span>
-              </span>
+                );
+              })}
             </div>
-            {albums.map(a => {
-              const isSelected = filterValue === a;
-              const isPlaying = currentSong?.album === a;
-              const thumbUrl = albumArtworks?.get(a);
-              return (
-                <div
-                  ref={(el) => { albumItemRefs.current[a] = el; }}
-                  key={a}
-                  className={`pl-3 pr-4 py-1 text-sm cursor-pointer transition-colors flex items-center gap-2 min-w-0 ${
-                    isSelected && isPlaying
-                      ? 'bg-violet-600 text-white font-medium'
-                      : isSelected
-                        ? 'bg-blue-600 text-white'
-                        : isPlaying
-                          ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-l-2 border-emerald-500'
-                          : 'hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
-                  }`}
-                  onClick={() => setFilterValue(a)}
+            <div ref={albumListRef} className="flex flex-col min-h-0 w-1/2 min-w-0 overflow-y-auto">
+              <div className="sticky top-0 z-[1] shrink-0 bg-[#f0f0f0] dark:bg-[#1e1e1e] border-b border-gray-200 dark:border-gray-700 px-1.5 py-1.5 space-y-1">
+                <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-tight block truncate" title={`${displayAlbums.length} albums`}>
+                  Albums ({displayAlbums.length})
+                </span>
+                <label
+                  className={`flex items-center gap-1.5 select-none rounded px-0.5 py-0.5 ${!currentSong ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer hover:bg-gray-200/80 dark:hover:bg-gray-800/80'}`}
+                  title={currentSong ? 'List only albums that include the now-playing artist' : 'Play a track to filter albums by artist'}
                 >
-                  <div className="w-6 h-6 rounded shrink-0 overflow-hidden bg-gray-300 dark:bg-gray-600 flex items-center justify-center text-[10px] text-gray-500 dark:text-gray-400">
-                    {thumbUrl
-                      ? <img src={thumbUrl} alt={a} className="w-full h-full object-cover" />
-                      : <Disc size={12} />
-                    }
+                  <input
+                    type="checkbox"
+                    className="rounded border-gray-400 text-blue-600 focus:ring-blue-500 shrink-0"
+                    checked={albumsCurrentArtistOnly}
+                    disabled={!currentSong}
+                    onChange={(e) => setAlbumsCurrentArtistOnly(e.target.checked)}
+                  />
+                  <span className="text-[10px] text-gray-600 dark:text-gray-400 leading-tight">Current artist only</span>
+                </label>
+              </div>
+              {displayAlbums.map(a => {
+                const isSelected = filterType === 'Albums' && filterValue === a;
+                const isPlaying = currentSong != null && currentSong.album === a;
+                const thumbUrl = albumArtworks?.get(a);
+                return (
+                  <div
+                    ref={(el) => { albumItemRefs.current[a] = el; }}
+                    key={a}
+                    className={`pl-2 pr-1 py-0.5 text-[11px] cursor-pointer transition-colors flex items-center gap-1.5 min-w-0 ${
+                      isSelected && isPlaying
+                        ? 'bg-violet-600 text-white font-medium'
+                        : isSelected
+                          ? 'bg-blue-600 text-white'
+                          : isPlaying
+                            ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-l-2 border-emerald-500'
+                            : 'hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
+                    }`}
+                    onClick={() => { setFilterType('Albums'); setFilterValue(a); }}
+                  >
+                    <div className="w-5 h-5 rounded shrink-0 overflow-hidden bg-gray-300 dark:bg-gray-600 flex items-center justify-center text-[8px] text-gray-500 dark:text-gray-400">
+                      {thumbUrl
+                        ? <img src={thumbUrl} alt={a} className="w-full h-full object-cover" />
+                        : <Disc size={10} />
+                      }
+                    </div>
+                    <span className="truncate flex-1">{a}</span>
                   </div>
-                  <span className="truncate flex-1">{a}</span>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
-        )}
-
-        {/* ── Playlist list ── */}
-        {filterType === 'Playlist' && (
-          <div className="mt-6 flex flex-col">
+        ) : filterType === 'Playlist' ? (
+          <div className="flex flex-col overflow-y-auto min-h-0 flex-1 py-2">
             <div className="flex items-center justify-between px-4 mb-2">
               <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Playlists</span>
               <button onClick={() => setShowNewPlaylist(true)} className="p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 hover:text-gray-800" title="New playlist">
@@ -338,11 +361,8 @@ export function Sidebar({
               </div>
             ))}
           </div>
-        )}
-
-        {/* ── Queue list ── */}
-        {filterType === 'Queue' && (
-          <div className="mt-6 flex flex-col">
+        ) : filterType === 'Queue' ? (
+          <div className="flex flex-col overflow-y-auto py-2 min-h-0 flex-1">
             <div className="flex items-center justify-between px-4 mb-2">
               <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Up Next</span>
               {queueSongs.length > 0 && (
@@ -377,11 +397,8 @@ export function Sidebar({
               <div className="px-4 py-2 text-sm text-gray-500 dark:text-gray-400">Queue is empty.</div>
             )}
           </div>
-        )}
-
-        {/* ── History list ── */}
-        {filterType === 'History' && (
-          <div className="mt-6 flex flex-col">
+        ) : (
+          <div className="flex flex-col overflow-y-auto py-2 min-h-0 flex-1">
             <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 px-4">Recently Played</div>
             {historyItems.length > 0 ? historyItems.map(({ entry, song, stats }) => (
               <button key={entry.id} type="button" className="px-4 py-2 text-left hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors" onClick={() => onPlayHistoryItem(song)}>

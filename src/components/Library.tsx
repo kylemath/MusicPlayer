@@ -69,6 +69,9 @@ function SongRow(props: { ariaAttributes: { "aria-posinset": number; "aria-setsi
       <div className="flex-1 min-w-[150px] pr-4 truncate font-medium">{song.title}</div>
       <div className="flex-1 min-w-[120px] pr-4 truncate">{song.artist}</div>
       <div className="w-16 flex-shrink-0 text-right pr-4 tabular-nums">{formatTime(song.duration)}</div>
+      <div className="w-11 flex-shrink-0 text-right pr-3 tabular-nums text-gray-600 dark:text-gray-400">
+        {song.trackNumber != null && song.trackNumber > 0 ? song.trackNumber : ''}
+      </div>
       <div className="flex-1 min-w-[120px] pr-4 truncate">{song.album}</div>
       <div className="w-24 flex-shrink-0 truncate">{song.genre || ''}</div>
       <div className="w-16 flex-shrink-0 flex justify-end">
@@ -219,7 +222,7 @@ export function Library({
 
   return (
     <div className="flex-1 flex flex-col overflow-x-auto bg-gray-50 dark:bg-[#1a1a1a]">
-      <div className={`${isHistoryMode ? 'min-w-[840px]' : 'min-w-[660px]'} flex-1 flex flex-col min-h-0 bg-white dark:bg-[#121212]`}>
+      <div className={`${isHistoryMode ? 'min-w-[840px]' : 'min-w-[760px]'} flex-1 flex flex-col min-h-0 bg-white dark:bg-[#121212]`}>
         {/* Table Header */}
         <div className="flex items-center px-4 py-2 border-b border-gray-200 dark:border-gray-800 text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wider bg-gray-50 dark:bg-[#1a1a1a] shrink-0">
           <div className="w-8 flex-shrink-0"></div>
@@ -254,6 +257,9 @@ export function Library({
               </div>
               <div className="w-16 flex-shrink-0 text-right pr-4">
                 <SortHeader label="Time" column="duration" currentColumn={sortColumn} direction={sortDirection} onSort={onSort} />
+              </div>
+              <div className="w-11 flex-shrink-0 text-right pr-3">
+                <SortHeader label="#" column="trackNumber" currentColumn={sortColumn} direction={sortDirection} onSort={onSort} className="ml-auto" />
               </div>
               <div className="flex-1 min-w-[120px] pr-4">
                 <SortHeader label="Album" column="album" currentColumn={sortColumn} direction={sortDirection} onSort={onSort} />

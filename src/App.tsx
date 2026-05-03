@@ -65,7 +65,7 @@ function App() {
     return () => { if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current); };
   }, [searchQuery]);
 
-  const [sortColumn, setSortColumn] = useState<SongSortColumn>('title');
+  const [sortColumn, setSortColumn] = useState<SongSortColumn>('trackNumber');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
   const [historySortColumn, setHistorySortColumn] = useState<HistorySortColumn>('playedAt');
   const [historySortDirection, setHistorySortDirection] = useState<SortDirection>('desc');
@@ -101,8 +101,8 @@ function App() {
   }
 
   // ─── Resizable column widths (px) ───────────────────────────────────────
-  const [sidebarW, setSidebarW] = useState(220);
-  const [vizPanelW, setVizPanelW] = useState(520);
+  const [sidebarW, setSidebarW] = useState(320);
+  const [vizPanelW, setVizPanelW] = useState(720);
   const [detailsPanelW, setDetailsPanelW] = useState(280);
 
   const abortRef = useRef<AbortController | null>(null);
@@ -324,6 +324,28 @@ function App() {
     }
     if (filterType === 'History' || filterType === 'Queue') return list;
     return [...list].sort((a, b) => {
+      if (sortColumn === 'trackNumber') {
+        const na = a.trackNumber ?? 1_000_000;
+        const nb = b.trackNumber ?? 1_000_000;
+        let c = sortDirection === 'asc' ? na - nb : nb - na;
+        if (c !== 0) return c;
+        c = a.album.toLowerCase().localeCompare(b.album.toLowerCase());
+        if (c !== 0) return c;
+        c = a.artist.toLowerCase().localeCompare(b.artist.toLowerCase());
+        if (c !== 0) return c;
+        return a.title.toLowerCase().localeCompare(b.title.toLowerCase());
+      }
+      if (sortColumn === 'album') {
+        let c = a.album.toLowerCase().localeCompare(b.album.toLowerCase());
+        if (c !== 0) return sortDirection === 'asc' ? c : -c;
+        const na = a.trackNumber ?? 1_000_000;
+        const nb = b.trackNumber ?? 1_000_000;
+        c = na - nb;
+        if (c !== 0) return c;
+        c = a.artist.toLowerCase().localeCompare(b.artist.toLowerCase());
+        if (c !== 0) return c;
+        return a.title.toLowerCase().localeCompare(b.title.toLowerCase());
+      }
       let va: string | number = (a as any)[sortColumn] ?? '';
       let vb: string | number = (b as any)[sortColumn] ?? '';
       if (sortColumn === 'duration') {

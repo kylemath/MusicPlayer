@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Play as PlayIcon, Zap, Maximize2, Minimize2 } from 'lucide-react';
+import { Play as PlayIcon, Zap, Maximize2, Minimize2, Code2 } from 'lucide-react';
 import { DEFAULT_SKETCH, PRESET_SKETCHES } from '../lib/defaultSketches';
 import { CodeEditor } from './CodeEditor';
 import { ResizeHandle } from './ResizeHandle';
@@ -44,8 +44,9 @@ export function Visualizer({ analyser, isMaximized = false, onMaximizeToggle }: 
   const [error, setError] = useState<string | null>(null);
   const [selectedPresetName, setSelectedPresetName] = useState<string>('Synaptic Garden');
   const [canvasHeight, setCanvasHeight] = useState(200);
-  const [catalogueHeight, setCatalogueHeight] = useState(192);
+  const [codePanelWidth, setCodePanelWidth] = useState(360);
   const [autorun, setAutorun] = useState(false);
+  const [showCodeEditor, setShowCodeEditor] = useState(false);
 
   // Continuously read analyser data
   useEffect(() => {
@@ -257,8 +258,8 @@ export function Visualizer({ analyser, isMaximized = false, onMaximizeToggle }: 
     setCanvasHeight((h) => Math.max(120, Math.min(500, h + delta)));
   }, []);
 
-  const handleCatalogueResize = useCallback((delta: number) => {
-    setCatalogueHeight((h) => Math.max(80, Math.min(400, h + delta)));
+  const handleCodePanelResize = useCallback((delta: number) => {
+    setCodePanelWidth((w) => Math.max(220, Math.min(640, w + delta)));
   }, []);
 
   return (
@@ -267,107 +268,142 @@ export function Visualizer({ analyser, isMaximized = false, onMaximizeToggle }: 
         <div className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
           Visualizer
         </div>
-        <button
-          type="button"
-          onClick={onMaximizeToggle ?? (() => {})}
-          className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors"
-          title={isMaximized ? 'Restore' : 'Maximize'}
-        >
-          {isMaximized ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
-          {isMaximized ? 'Restore' : 'Maximize'}
-        </button>
+        <div className="flex items-center gap-2">
+          {!isMaximized && (
+            <button
+              type="button"
+              onClick={() => setShowCodeEditor((v) => !v)}
+              className={`inline-flex items-center gap-1 px-2 py-1 text-xs rounded border transition-colors ${
+                showCodeEditor
+                  ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-blue-500/10'
+                  : 'border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800'
+              }`}
+              title={showCodeEditor ? 'Hide live code' : 'Show live code'}
+            >
+              <Code2 size={12} />
+              Code
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onMaximizeToggle ?? (() => {})}
+            className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors"
+            title={isMaximized ? 'Restore' : 'Maximize'}
+          >
+            {isMaximized ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
+            {isMaximized ? 'Restore' : 'Maximize'}
+          </button>
+        </div>
       </div>
-      {/* ── Canvas (resizable height when windowed; fills space when fullscreen) ── */}
       <div
-        ref={canvasContainerRef}
-        className={`relative overflow-hidden bg-black w-full ${isMaximized ? 'flex-1 min-h-0 mx-2 mt-2 mb-2 rounded-3xl' : 'shrink-0 rounded-3xl mx-2 mt-2'}`}
-        style={isMaximized ? undefined : { height: canvasHeight }}
+        className={`flex min-h-0 min-w-0 overflow-hidden ${isMaximized ? 'flex-1 flex-col' : 'flex-1 flex-row'}`}
       >
-        {!analyser && (
-          <div className="absolute inset-0 flex items-center justify-center text-gray-600 text-sm z-10 pointer-events-none">
-            Play a song to activate
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <div
+            ref={canvasContainerRef}
+            className={`relative mx-2 mt-2 overflow-hidden rounded-3xl bg-black ${
+              isMaximized ? 'mb-2 min-h-0 flex-1' : 'shrink-0'
+            }`}
+            style={isMaximized ? undefined : { height: canvasHeight }}
+          >
+            {!analyser && (
+              <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center text-sm text-gray-600">
+                Play a song to activate
+              </div>
+            )}
           </div>
+
+          {!isMaximized && <ResizeHandle onDrag={handleCanvasResize} vertical />}
+
+          {!isMaximized && (
+            <div className="flex min-h-0 flex-1 flex-col border-t border-gray-200 bg-gray-50 px-2 py-2 shadow-inner dark:border-gray-800 dark:bg-[#1a1a1a]">
+              <div
+                className="grid min-h-0 flex-1 grid-cols-2 gap-2 overflow-y-auto overflow-x-hidden pb-1 scrollbar-thin"
+                style={{ scrollbarWidth: 'thin' }}
+              >
+                {Object.keys(PRESET_SKETCHES).map((name) => {
+                  const isSelected = selectedPresetName === name;
+                  return (
+                    <button
+                      key={name}
+                      type="button"
+                      onClick={() => loadPreset(name)}
+                      className={`w-full overflow-hidden rounded-md border text-left shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-[#1a1a1a] ${
+                        isSelected
+                          ? 'border-blue-500 ring-1 ring-blue-500/50'
+                          : 'border-gray-300 dark:border-gray-700 hover:border-gray-400 dark:hover:border-gray-500'
+                      }`}
+                    >
+                      <div className="relative aspect-video w-full bg-black">
+                        <div className="absolute inset-0">
+                          <MiniP5Preview sketchCode={PRESET_SKETCHES[name]!} audioDataRef={audioDataRef} />
+                        </div>
+                        <div
+                          className="pointer-events-none absolute inset-x-0 bottom-0 h-[55%] bg-gradient-to-t from-black/95 via-black/45 to-transparent"
+                          aria-hidden
+                        />
+                        <div className="absolute inset-x-0 bottom-0 px-1.5 pb-1 pt-5">
+                          <p className="truncate text-left text-[10px] font-medium text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
+                            {name}
+                          </p>
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {!isMaximized && showCodeEditor && (
+          <>
+            <ResizeHandle onDrag={handleCodePanelResize} />
+            <div
+              className="flex min-h-0 shrink-0 flex-col border-l border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-[#121212]"
+              style={{ width: codePanelWidth }}
+            >
+              <div className="z-10 flex shrink-0 items-center gap-2 border-b border-gray-200 bg-gray-100 px-3 py-1.5 shadow-sm dark:border-gray-800 dark:bg-[#1a1a1a]">
+                <button
+                  onClick={handleRun}
+                  className="flex items-center gap-1 rounded border border-gray-300 bg-white px-2 py-0.5 text-xs text-gray-700 shadow-sm transition hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
+                  title="Run (Cmd+Enter)"
+                >
+                  <PlayIcon size={12} className="text-green-600 dark:text-green-400" /> Run
+                </button>
+                <label className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400">
+                  <input
+                    type="checkbox"
+                    checked={autorun}
+                    onChange={(e) => setAutorun(e.target.checked)}
+                    className="rounded border-gray-400 dark:border-gray-500"
+                  />
+                  <Zap size={12} className="text-amber-500" />
+                  <span>Autorun</span>
+                </label>
+                {error ? (
+                  <div className="flex min-w-0 flex-1 items-center gap-2" title={error}>
+                    <div className="error-dance shrink-0" aria-hidden>
+                      <svg viewBox="0 0 64 64" className="h-8 w-8 text-red-500 dark:text-red-400">
+                        <circle cx="32" cy="32" r="26" fill="none" stroke="currentColor" strokeWidth="2" />
+                        <path d="M 22 26 L 26 30 M 26 26 L 22 30" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                        <path d="M 38 26 L 42 30 M 42 26 L 38 30" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                        <path d="M 20 44 Q 32 52 44 44" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" />
+                        <ellipse cx="28" cy="18" rx="3" ry="4" fill="currentColor" opacity="0.6" />
+                        <ellipse cx="36" cy="18" rx="3" ry="4" fill="currentColor" opacity="0.6" />
+                      </svg>
+                    </div>
+                    <span className="truncate text-xs text-red-500 dark:text-red-400">{error}</span>
+                  </div>
+                ) : null}
+              </div>
+              <div className="flex min-h-0 flex-1 flex-col">
+                <CodeEditor value={code} onChange={setCode} onKeyDown={handleKeyDown} />
+              </div>
+            </div>
+          </>
         )}
       </div>
-
-      {!isMaximized && <ResizeHandle onDrag={handleCanvasResize} vertical />}
-
-      {/* ── Card catalogue: preset selector with preview (hidden when maximized) ── */}
-      {!isMaximized && (
-      <div className="shrink-0 px-2 py-2 bg-gray-50 dark:bg-[#1a1a1a] border-y border-gray-200 dark:border-gray-800 shadow-inner min-h-0 overflow-hidden" style={{ maxHeight: catalogueHeight }}>
-        <div className="flex flex-wrap gap-2 overflow-y-auto overflow-x-hidden pb-1 scrollbar-thin" style={{ scrollbarWidth: 'thin', maxHeight: catalogueHeight - 16 }}>
-          {Object.keys(PRESET_SKETCHES).map((name) => {
-            const isSelected = selectedPresetName === name;
-            return (
-              <button
-                key={name}
-                type="button"
-                onClick={() => loadPreset(name)}
-                className={`shrink-0 w-28 rounded-lg overflow-hidden border transition-all focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 dark:focus:ring-offset-[#1a1a1a] shadow-sm bg-white dark:bg-black ${
-                  isSelected ? 'border-blue-500 ring-1 ring-blue-500/50' : 'border-gray-300 dark:border-gray-700 hover:border-gray-400 dark:hover:border-gray-500'
-                }`}
-              >
-                <div className="h-16 w-full relative bg-black">
-                  <MiniP5Preview sketchCode={PRESET_SKETCHES[name]!} audioDataRef={audioDataRef} />
-                </div>
-                <div className="px-1.5 py-1 bg-white dark:bg-[#161b22] text-[10px] font-medium text-gray-700 dark:text-gray-300 truncate text-center border-t border-gray-100 dark:border-gray-800">
-                  {name}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-      )}
-
-      {!isMaximized && <ResizeHandle onDrag={handleCatalogueResize} vertical />}
-
-      {/* ── Lower section: editable code boundary (hidden when maximized) ── */}
-      {!isMaximized && (
-      <div className="flex-1 flex flex-col min-h-0 bg-gray-50 dark:bg-[#121212]">
-        <div className="flex items-center gap-2 px-3 py-1.5 bg-gray-100 dark:bg-[#1a1a1a] border-b border-gray-200 dark:border-gray-800 shrink-0 shadow-sm z-10">
-          <button
-            onClick={handleRun}
-            className="flex items-center gap-1 px-2 py-0.5 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 text-xs rounded transition shadow-sm"
-            title="Run (Cmd+Enter)"
-          >
-            <PlayIcon size={12} className="text-green-600 dark:text-green-400" /> Run
-          </button>
-          <label className="flex items-center gap-1.5 cursor-pointer select-none text-xs text-gray-600 dark:text-gray-400">
-            <input
-              type="checkbox"
-              checked={autorun}
-              onChange={(e) => setAutorun(e.target.checked)}
-              className="rounded border-gray-400 dark:border-gray-500"
-            />
-            <Zap size={12} className="text-amber-500" />
-            <span>Autorun</span>
-          </label>
-          {error ? (
-            <div className="flex items-center gap-2 flex-1 min-w-0" title={error}>
-              <div className="error-dance shrink-0" aria-hidden>
-                <svg viewBox="0 0 64 64" className="w-8 h-8 text-red-500 dark:text-red-400">
-                  <circle cx="32" cy="32" r="26" fill="none" stroke="currentColor" strokeWidth="2" />
-                  <path d="M 22 26 L 26 30 M 26 26 L 22 30" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                  <path d="M 38 26 L 42 30 M 42 26 L 38 30" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                  <path d="M 20 44 Q 32 52 44 44" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" />
-                  <ellipse cx="28" cy="18" rx="3" ry="4" fill="currentColor" opacity="0.6" />
-                  <ellipse cx="36" cy="18" rx="3" ry="4" fill="currentColor" opacity="0.6" />
-                </svg>
-              </div>
-              <span className="text-red-500 dark:text-red-400 text-xs truncate">{error}</span>
-            </div>
-          ) : null}
-        </div>
-        <div className="flex-1 min-h-0 flex flex-col">
-          <CodeEditor
-            value={code}
-            onChange={setCode}
-            onKeyDown={handleKeyDown}
-          />
-        </div>
-      </div>
-      )}
     </div>
   );
 }

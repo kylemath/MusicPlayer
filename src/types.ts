@@ -92,7 +92,7 @@ export interface LibraryState {
   error: string | null;
 }
 
-export type SongSortColumn = 'title' | 'artist' | 'album' | 'duration' | 'genre';
+export type SongSortColumn = 'title' | 'artist' | 'album' | 'duration' | 'genre' | 'trackNumber';
 export type HistorySortColumn = 'title' | 'artist' | 'album' | 'playedAt' | 'listenedSeconds' | 'playCount';
 export type SortColumn = SongSortColumn | HistorySortColumn;
 export type SortDirection = 'asc' | 'desc';

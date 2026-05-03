@@ -55,14 +55,14 @@ export function MiniP5Preview({ sketchCode, audioDataRef }: MiniP5PreviewProps) 
 
         if (userFns.setup) {
           p.setup = function () {
-            try { 
-              userFns.setup(); 
+            try {
+              userFns.setup();
               p.frameRate(15); // limit framerate for preview
-            } catch (e: any) { }
+            } catch (e: any) { /* ignore */ }
           };
         } else {
-          p.setup = () => { 
-            p.createCanvas(W, H); 
+          p.setup = () => {
+            p.createCanvas(W, H);
             p.frameRate(15);
           };
         }
