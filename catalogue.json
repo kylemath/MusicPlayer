@@ -7,5 +7,6 @@
   "kind": "project",
   "categories": ["music", "web", "player"],
   "tags": ["music", "web", "player"],
-  "status": "published"
+  "status": "published",
+  "server": { "type": "node", "port": 5173, "openPath": "/", "autoStart": true }
 }
