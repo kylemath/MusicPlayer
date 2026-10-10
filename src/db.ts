@@ -1,6 +1,7 @@
 import { get, set, del } from 'idb-keyval';
 import type { PlaybackPreferences, PlayHistoryState, Playlist, Song } from './types';
 import type { RemoteSession } from './lib/remoteLibrary';
+import { plainKeptRecord, plainLibrary, type ConnectedLibrary, type KeptSongRecord } from './lib/catalog';
 
 const DIRECTORY_HANDLE_KEY = 'music_directory_handle';
 const SONGS_CACHE_KEY = 'music_songs_cache';
@@ -180,4 +181,24 @@ export async function deleteKeptAudio(songId: string): Promise<void> {
   await del(keptAudioKey(songId));
   const ids = (await getKeptSongIds()).filter((id) => id !== songId);
   await set(KEPT_IDS_KEY, ids);
+}
+
+const CONNECTED_LIBRARIES_KEY = 'music_connected_libraries';
+const KEPT_SONG_RECORDS_KEY = 'music_kept_song_records';
+
+export async function getConnectedLibraries(): Promise<ConnectedLibrary[]> {
+  return (await get<ConnectedLibrary[]>(CONNECTED_LIBRARIES_KEY)) ?? [];
+}
+
+export async function saveConnectedLibraries(libraries: ConnectedLibrary[]): Promise<void> {
+  await set(CONNECTED_LIBRARIES_KEY, libraries.map(plainLibrary));
+}
+
+export async function getKeptSongRecords(): Promise<KeptSongRecord[]> {
+  return (await get<KeptSongRecord[]>(KEPT_SONG_RECORDS_KEY)) ?? [];
+}
+
+export async function saveKeptSongRecords(records: KeptSongRecord[]): Promise<void> {
+  await set(KEPT_SONG_RECORDS_KEY, records.map(plainKeptRecord));
+  await set(KEPT_IDS_KEY, records.map((record) => record.id));
 }

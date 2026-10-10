@@ -38,6 +38,17 @@ export function normalizeServerUrl(input: string): string {
   }
 }
 
+export async function probeLibrary(session: RemoteSession): Promise<boolean> {
+  try {
+    const res = await fetch(apiUrl(session.baseUrl, '/api/health'), { signal: AbortSignal.timeout(2500) });
+    if (!res.ok) return false;
+    const data = await res.json() as { ok?: boolean };
+    return data.ok === true;
+  } catch {
+    return false;
+  }
+}
+
 export async function probeSameOriginLibrary(): Promise<boolean> {
   try {
     const res = await fetch('/api/health', { signal: AbortSignal.timeout(1500) });

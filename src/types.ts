@@ -12,7 +12,11 @@ export interface Song {
   genre?: string;
   /** Present for songs read from a folder on this computer. */
   fileHandle?: FileSystemFileHandle;
-  /** `remote` songs stream from the library server until kept on this device. */
+  /** `0` is on this device. `1`, `2`, … are connected libraries. */
+  libraryId?: string;
+  /** Id on the library server. The player id stays unique across libraries. */
+  remoteId?: string;
+  /** `remote` songs stream from a library until the first play saves a copy here. */
   source?: SongSource;
   /** Authenticated stream URL. Rebuilt when the session changes, not stored as the cache. */
   streamUrl?: string;

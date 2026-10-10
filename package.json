@@ -13,7 +13,9 @@
     "share": "./scripts/tailscale-serve.sh",
     "launch": "./scripts/launch.sh",
     "create-app": "./scripts/create-app.sh",
-    "install-app": "./scripts/create-app.sh --install"
+    "install-app": "./scripts/create-app.sh --install",
+    "install-client": "./scripts/create-app.sh --install --client",
+    "install-server": "./scripts/create-app.sh --install --server"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.2.1",

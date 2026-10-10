@@ -27,12 +27,13 @@ export function LibraryConnect({
   const [password, setPassword] = useState('');
   const [serverUrl, setServerUrl] = useState(savedServerUrl);
   const [otherServer, setOtherServer] = useState(!sameOriginReady);
-  const [role, setRole] = useState<'slave' | 'server'>('slave');
+  const installedRole = (import.meta.env as { VITE_KYTUNES_ROLE?: string }).VITE_KYTUNES_ROLE;
+  const canHost = import.meta.env.DEV && installedRole !== 'client';
+  const [role, setRole] = useState<'slave' | 'server'>(installedRole === 'server' ? 'server' : 'slave');
   const [musicDir, setMusicDir] = useState('~/Music');
   const [hostError, setHostError] = useState<string | null>(null);
   const [hosting, setHosting] = useState(false);
   const showUrlField = !sameOriginReady || otherServer;
-  const canHost = import.meta.env.DEV;
 
   useEffect(() => {
     if (!canHost) return;
@@ -78,7 +79,11 @@ export function LibraryConnect({
         </div>
         <h1 className="text-2xl font-bold mb-2 text-center">Welcome to KyTunes</h1>
         <p className="text-gray-600 dark:text-gray-400 mb-6 text-center text-sm">
-          This computer opens as a player. Join a library, or choose Server if this is the computer that should host the music.
+          {installedRole === 'server'
+            ? 'This computer hosts the music. Choose the folder and a password, then other computers can connect.'
+            : canHost
+              ? 'This computer opens as a player. Join a library, or choose Server if this is the computer that should host the music.'
+              : 'This computer is a player. Connect to the library that hosts the music.'}
         </p>
 
         {canHost && (
@@ -222,8 +227,9 @@ export function LibraryConnect({
         </button>
 
         <p className="mt-6 text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
-          Slave joins a library that is already hosted. Server starts hosting on this computer and publishes it with Tailscale when that app is signed in.
-          A saved library on this Mac still needs the password you chose the first time.
+          {canHost
+            ? 'Slave joins a library that is already hosted. Server starts hosting on this computer and publishes it with Tailscale when that app is signed in. A saved library on this Mac still needs the password you chose the first time.'
+            : 'Enter the address and password from the computer that hosts the music. Keep stores a song on this device.'}
         </p>
       </div>
     </div>

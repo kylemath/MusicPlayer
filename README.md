@@ -2,7 +2,7 @@
 
 A music player for files on your computer. Another computer or a phone runs the same app and streams songs from the one machine that holds the library. Nothing is copied until you tap **Keep** on a song.
 
-**[Public demo](https://kylemath.github.io/KyTunes)** — three short original tracks, no sign-in. That page does not reach your home library.
+**[Install KyTunes](https://kylemath.github.io/KyTunes)** — the same player, hosted on GitHub Pages. Open that link and install it from the browser. It starts with the built-in tracks. Add a server from the library menu when you want one.
 
 ## Play a folder on this computer
 
@@ -44,12 +44,10 @@ A home-screen install that behaves as its own app needs HTTPS. Away from home, i
 
 Android Chrome cannot browse an arbitrary music folder. The phone streams, and **Keep** stores the songs you want on the device.
 
-## Public demo
+## Installed from GitHub Pages
 
-The GitHub Pages site plays five public-domain classical recordings in `public/demo/` (Bach, Mozart, Beethoven, Chopin, and Vivaldi). The performances come from Wikimedia Commons, released as public domain or CC0 by Musopen, the European Archive, and the Modena Chamber Orchestra. The page uses the same disc icon as the app.
+[https://kylemath.github.io/KyTunes](https://kylemath.github.io/KyTunes) is this app. Chrome and Edge show an install icon. On a phone, use **Add to Home Screen**. The installed window is the player: library 0 is the five public-domain recordings in `public/demo/` (Bach, Mozart, Beethoven, Chopin, and Vivaldi, from Musopen, the European Archive, and the Modena Chamber Orchestra), plus any folder you pick and any song you have already played from a server.
 
-Opening that site does not connect to your library. The page is served over HTTPS, and browsers will not let it call a private `http://` address on your home network. A visitor also should not be sent to your music.
+The page is HTTPS. It can connect to an `https://` library, such as Tailscale Serve. A home `http://` address is blocked by the browser. On your own network, run the app locally and connect, as above.
 
-The connect form is still on that page for an `https://` library address you can actually reach, such as Tailscale Serve while that computer is on your tailnet. Typing a home `http://` address there will fail. For your own machines, run the app locally and connect, as above.
-
-Pages deploys with GitHub Actions (`npm run build:pages`) when `main` is pushed. The library server build stays at `/` and still includes the installable app.
+Pages deploys with GitHub Actions (`npm run build:pages`) when `main` is pushed. That build is the installable app. The library server build stays at `/` and serves the same player with the music.

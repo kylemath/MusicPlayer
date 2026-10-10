@@ -39,6 +39,7 @@ interface PlayerProps {
   keepState?: 'available' | 'kept' | 'saving';
   onToggleKeep?: () => void;
   resolveAudioUrl?: (song: Song) => Promise<{ url: string; revoke: boolean }>;
+  onLibraryUnavailable?: (libraryId: string) => void;
 }
 
 // ─── EQ definitions ──────────────────────────────────
@@ -91,6 +92,7 @@ export function Player({
   keepState,
   onToggleKeep,
   resolveAudioUrl,
+  onLibraryUnavailable,
 }: PlayerProps) {
   const audioRef    = useRef<HTMLAudioElement>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -195,7 +197,10 @@ export function Player({
         audioRef.current.volume = volume;
         if (audioCtxRef.current?.state === 'suspended') audioCtxRef.current.resume();
         if (isPlaying) audioRef.current.play().catch(console.error);
-      } catch (e) { console.error('Failed to load audio', e); }
+      } catch (e) {
+        console.error('Failed to load audio', e);
+        if (song.source === 'remote' && song.libraryId && song.libraryId !== '0') onLibraryUnavailable?.(song.libraryId);
+      }
     };
     loadAudio();
     return () => {
@@ -650,6 +655,10 @@ export function Player({
         onTimeUpdate={handleTimeUpdate}
         onLoadedMetadata={handleLoadedMetadata}
         onEnded={handleTrackEnded}
+        onError={() => {
+          const song = currentSong;
+          if (song?.source === 'remote' && song.libraryId && song.libraryId !== '0') onLibraryUnavailable?.(song.libraryId);
+        }}
         crossOrigin="anonymous"
       />
     </div>

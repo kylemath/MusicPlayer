@@ -1,12 +1,15 @@
 #!/bin/bash
-# LocalPlayer launcher — starts Vite dev server and opens as installed PWA
-# Designed to work standalone from .app double-click (no terminal/IDE needed)
+# Opens KyTunes.
+# KYTUNES_ROLE=client serves the built player and does not host music.
+# KYTUNES_ROLE=server hosts the library, or opens setup until that library exists.
+# With no role (npm run launch), this starts the Vite dev server.
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-PORT=5173
-URL="http://localhost:$PORT"
 LOG_FILE="$PROJECT_DIR/.localplayer.log"
 APP_NAME="KyTunes"
+if [ "$KYTUNES_ROLE" = "server" ]; then
+  APP_NAME="KyTunes Server"
+fi
 
 exec > "$LOG_FILE" 2>&1
 
@@ -70,12 +73,12 @@ or:
 fi
 
 SERVER_PID=""
-DEV_STARTED=0
+STARTED=0
 
 # ---------- Clean up on exit ----------
-# Only the dev server this launch started is stopped.
+# Only the process this launch started is stopped.
 cleanup() {
-  if [ "$DEV_STARTED" = "1" ] && [ -n "$SERVER_PID" ]; then
+  if [ "$STARTED" = "1" ] && [ -n "$SERVER_PID" ]; then
     kill "$SERVER_PID" 2>/dev/null
   fi
 }
@@ -83,26 +86,72 @@ trap cleanup EXIT INT TERM
 
 cd "$PROJECT_DIR" || exit 1
 
-# ---------- Vite dev server ----------
-# Opening the app starts the player only. The library server and Tailscale
-# Serve stay separate, so this machine does not host music unless you start them.
-if curl -sf "$URL" >/dev/null 2>&1; then
-  echo "Dev server already running on port $PORT — leaving it up"
-else
-  echo "Starting dev server on port $PORT"
-  npm run dev -- --port "$PORT" >> "$LOG_FILE" 2>&1 &
+library_port() {
+  node --input-type=module -e "
+    import fs from 'node:fs';
+    try {
+      const config = JSON.parse(fs.readFileSync('library.config.json', 'utf8'));
+      process.stdout.write(String(config.port || 8787));
+    } catch {
+      process.stdout.write('8787');
+    }
+  "
+}
+
+ensure_player_build() {
+  if [ ! -f "$PROJECT_DIR/dist/index.html" ]; then
+    echo "Building the player"
+    npm run build || exit 1
+  fi
+}
+
+start_url() {
+  local label="$1"
+  shift
+  if curl -sf "$URL" >/dev/null 2>&1; then
+    echo "$label already running at $URL — leaving it up"
+    return
+  fi
+  echo "Starting $label at $URL"
+  "$@" &
   SERVER_PID=$!
-  DEV_STARTED=1
+  STARTED=1
+}
+
+# ---------- What this install is allowed to start ----------
+# client: built player, then connect to someone else's library.
+# server: player and music on one port, after the folder and password exist.
+# unset:   Vite, for working on the app.
+if [ "$KYTUNES_ROLE" = "client" ]; then
+  PORT=4173
+  URL="http://localhost:$PORT"
+  ensure_player_build
+  start_url "player" npm run preview -- --port "$PORT" --strictPort --host
+elif [ "$KYTUNES_ROLE" = "server" ] && [ -f "$PROJECT_DIR/library.config.json" ]; then
+  PORT="$(library_port)"
+  URL="http://localhost:$PORT"
+  ensure_player_build
+  start_url "library" node server/library-server.mjs
+elif [ "$KYTUNES_ROLE" = "server" ]; then
+  PORT=5173
+  URL="http://localhost:$PORT"
+  echo "No saved library yet — opening setup"
+  export VITE_KYTUNES_ROLE=server
+  start_url "setup" npm run dev -- --port "$PORT" --strictPort
+else
+  PORT=5173
+  URL="http://localhost:$PORT"
+  start_url "dev server" npm run dev -- --port "$PORT" --strictPort
 fi
 
-echo "Waiting for server on port $PORT..."
-for i in $(seq 1 30); do
+echo "Waiting for $URL..."
+for i in $(seq 1 60); do
   if curl -sf "$URL" >/dev/null 2>&1; then
-    echo "Dev server is up after ~$((i / 2))s"
+    echo "Ready after ~$((i / 2))s"
     break
   fi
-  if [ "$DEV_STARTED" = "1" ] && ! kill -0 "$SERVER_PID" 2>/dev/null; then
-    echo "Dev server exited"
+  if [ "$STARTED" = "1" ] && ! kill -0 "$SERVER_PID" 2>/dev/null; then
+    echo "Process exited"
     break
   fi
   sleep 0.5
@@ -113,23 +162,24 @@ if ! curl -s "$URL" >/dev/null 2>&1; then
   exit 1
 fi
 
-# ---------- Open the app ----------
-# Prefer the installed PWA (custom icon, standalone) — but only when launched via
-# this .app, which has already started the server. Do NOT open the PWA directly
-# from Chrome Apps/Dock — use this .app launcher instead.
+# ---------- Open the window ----------
+# A client or server install opens the address this launch just started.
+# npm run launch still prefers a KyTunes PWA that points at the dev server.
 PWA_APP=""
-for dir in "$HOME/Applications/Chrome Apps.localized" "$HOME/Applications/Chrome Apps" "$HOME/Applications"; do
-  if [ -d "$dir/$APP_NAME.app" ]; then
-    PWA_APP="$dir/$APP_NAME.app"
-    break
-  fi
-done
+if [ -z "$KYTUNES_ROLE" ]; then
+  for dir in "$HOME/Applications/Chrome Apps.localized" "$HOME/Applications/Chrome Apps" "$HOME/Applications"; do
+    if [ -d "$dir/KyTunes.app" ]; then
+      PWA_APP="$dir/KyTunes.app"
+      break
+    fi
+  done
+fi
 
 if [ -n "$PWA_APP" ]; then
   echo "Launching installed PWA: $PWA_APP"
   open -a "$PWA_APP"
 else
-  echo "PWA not installed — opening in Chrome."
+  echo "Opening $URL"
   if [ -d "/Applications/Google Chrome.app" ]; then
     open -na "Google Chrome" --args "--app=$URL"
   elif [ -d "/Applications/Chromium.app" ]; then
@@ -141,19 +191,10 @@ else
   else
     open "$URL"
   fi
-
-  sleep 3
-  osascript -e "display dialog \"To get a standalone app with its own Dock icon:
-
-1. Look for the install icon (⊕) on the right side of the address bar
-2. Click it and choose Install
-
-Then always launch via the KyTunes.app (from create-app) — not the PWA directly — so the server starts first.\" with title \"$APP_NAME — Install as App\" buttons {\"OK\"} default button \"OK\"" &
 fi
 
-# Stay alive while a server this launch started is running, so quitting the
-# app stops only that process. An already-running dev server is not waited on
-# and is not stopped.
-if [ "$DEV_STARTED" = "1" ]; then
+# Stay alive while a process this launch started is running, so quitting the
+# app stops only that process. An already-running server is left alone.
+if [ "$STARTED" = "1" ]; then
   wait "$SERVER_PID"
 fi

@@ -44,6 +44,17 @@ interface SidebarProps {
   onClearQueue: () => void;
   onPlayHistoryItem: (song: Song) => void;
   onPlaylistsChange: (updater: (prev: PlaylistItem[]) => PlaylistItem[]) => void;
+  libraries: { id: string; name: string; reachable?: boolean }[];
+  libraryFilter: string;
+  onLibraryFilter: (id: string) => void;
+  onAddLibrary: (url: string, password: string) => Promise<void>;
+  onRemoveLibrary: (id: string) => void;
+  onChooseFolder: () => void;
+  canPickFolder: boolean;
+  canHost: boolean;
+  onHost: (musicDir: string, password: string) => Promise<void>;
+  connectError: string | null;
+  connecting: boolean;
 }
 
 export function Sidebar({
@@ -52,7 +63,19 @@ export function Sidebar({
   artistAvatars, albumArtworks, artistGroupOverrides, onArtistGroupOverridesChange,
   userQueue, queueSongs, onRemoveFromQueue, onClearQueue,
   onPlayHistoryItem, onPlaylistsChange,
+  libraries, libraryFilter, onLibraryFilter, onAddLibrary, onRemoveLibrary,
+  onChooseFolder, canPickFolder, canHost, onHost, connectError, connecting,
 }: SidebarProps) {
+  const [showAddServer, setShowAddServer] = useState(false);
+  const [showHost, setShowHost] = useState(false);
+  const [showServeHelp, setShowServeHelp] = useState(false);
+  const [serveOs, setServeOs] = useState<'mac' | 'windows'>(() =>
+    typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent) ? 'windows' : 'mac',
+  );
+  const [serverUrl, setServerUrl] = useState('');
+  const [serverPassword, setServerPassword] = useState('');
+  const [musicDir, setMusicDir] = useState('~/Music');
+  const [hostPassword, setHostPassword] = useState('');
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [showNewPlaylist, setShowNewPlaylist] = useState(false);
   /** When true, album column lists only albums that include the current track’s canonical artist. */
@@ -186,9 +209,190 @@ export function Sidebar({
 
   return (
     <div className="relative bg-[#f0f0f0] dark:bg-[#1e1e1e] flex flex-col overflow-hidden h-full">
+      {showServeHelp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4" onClick={() => setShowServeHelp(false)}>
+          <div
+            className="max-w-md w-full max-h-[85vh] overflow-y-auto rounded-xl bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 p-6 shadow-lg"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2 className="text-lg font-semibold mb-2">Serve from this computer</h2>
+            <div className="flex rounded-lg bg-gray-100 dark:bg-gray-900 p-1 mb-3" role="group" aria-label="Instructions for">
+              {(['mac', 'windows'] as const).map((os) => (
+                <button
+                  key={os}
+                  type="button"
+                  aria-pressed={serveOs === os}
+                  onClick={() => setServeOs(os)}
+                  className={`flex-1 py-1.5 rounded-md text-sm font-medium ${serveOs === os ? 'bg-white dark:bg-gray-700 shadow text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-400'}`}
+                >
+                  {os === 'mac' ? 'Mac' : 'Windows'}
+                </button>
+              ))}
+            </div>
+            {serveOs === 'mac' ? (
+              <>
+                <p className="text-sm text-gray-600 dark:text-gray-300 mb-3">
+                  This install keeps playing. Serving a folder needs the KyTunes server on this Mac. After it is running, come back here and add its address.
+                </p>
+                <ol className="text-sm space-y-2 list-decimal pl-4 mb-4">
+                  <li>In Terminal, run <code className="text-xs">git --version</code>. If that fails, install Git with <code className="text-xs">xcode-select --install</code>.</li>
+                  <li>Run <code className="text-xs">node --version</code>. You need Node 18 or newer. If that fails, install it with <code className="text-xs">brew install node</code>.</li>
+                  <li>Clone <span className="font-medium">https://github.com/kylemath/kytunes</span>, then install the server. If this Mac already has that folder, skip the clone and run <code className="text-xs">npm run install-server</code> there.</li>
+                  <li>Open <span className="font-medium">KyTunes Server</span>, choose the folder and a password. With Tailscale signed in, it shows an <code className="text-xs">https://</code> address.</li>
+                  <li>In this window, choose <span className="font-medium">Add a server</span> and enter that address and the same password.</li>
+                </ol>
+                <pre className="text-xs bg-gray-100 dark:bg-gray-900 rounded-lg p-3 overflow-x-auto mb-4">{`xcode-select --install
+brew install node
+git clone https://github.com/kylemath/kytunes.git
+cd kytunes
+npm install
+npm run install-server`}</pre>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-gray-600 dark:text-gray-300 mb-3">
+                  This install keeps playing. Serving a folder needs Git, Node, and the KyTunes checkout on this PC. After it is running, come back here and add its address.
+                </p>
+                <ol className="text-sm space-y-2 list-decimal pl-4 mb-4">
+                  <li>In Command Prompt or PowerShell, run <code className="text-xs">git --version</code>. If that fails, install Git from <span className="font-medium">https://git-scm.com/download/win</span>.</li>
+                  <li>Run <code className="text-xs">node --version</code>. You need Node 18 or newer. If that fails, install it from <span className="font-medium">https://nodejs.org</span>.</li>
+                  <li>Clone <span className="font-medium">https://github.com/kylemath/kytunes</span>. If this PC already has that folder, skip the clone and run the commands below there.</li>
+                  <li>The dev app opens in the browser. Choose <span className="font-medium">Host on this computer</span>, then the folder and a password. Tailscale must be installed and signed in, with <code className="text-xs">tailscale</code> on the PATH, so it can show an <code className="text-xs">https://</code> address.</li>
+                  <li>In this window, choose <span className="font-medium">Add a server</span> and enter that address and the same password.</li>
+                </ol>
+                <pre className="text-xs bg-gray-100 dark:bg-gray-900 rounded-lg p-3 overflow-x-auto mb-4">{`git clone https://github.com/kylemath/kytunes.git
+cd kytunes
+npm install
+npm run dev`}</pre>
+              </>
+            )}
+            <button type="button" onClick={() => setShowServeHelp(false)} className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg text-sm font-medium">
+              Keep using this player
+            </button>
+          </div>
+        </div>
+      )}
       {/* Library shortcuts — fixed at top */}
       <div className="shrink-0 py-2">
-        <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 px-4">Library</div>
+        <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 px-4">Libraries</div>
+        <button
+          type="button"
+          onClick={() => { onLibraryFilter('0'); setFilterType('All'); setFilterValue(''); }}
+          className={`w-full text-left px-4 py-1.5 text-sm ${libraryFilter === '0' ? 'bg-blue-600 text-white' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800'}`}
+        >
+          0 · On this device
+        </button>
+        <button
+          type="button"
+          onClick={() => { onLibraryFilter('all'); setFilterType('All'); setFilterValue(''); }}
+          className={`w-full text-left px-4 py-1.5 text-sm ${libraryFilter === 'all' ? 'bg-blue-600 text-white' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800'}`}
+        >
+          All libraries
+        </button>
+        {libraries.map((library) => (
+          <div key={library.id} className={`flex items-center pr-2 ${libraryFilter === library.id ? 'bg-blue-600 text-white' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800'}`}>
+            <button
+              type="button"
+              onClick={() => { onLibraryFilter(library.id); setFilterType('All'); setFilterValue(''); }}
+              title={library.reachable === false ? `${library.name} is not reachable. Its songs are hidden.` : library.name}
+              className={`flex-1 text-left px-4 py-1.5 text-sm truncate ${library.reachable === false ? 'opacity-60' : ''}`}
+            >
+              {library.id} · {library.name}{library.reachable === false ? ' · offline' : ''}
+            </button>
+            <button
+              type="button"
+              onClick={() => onRemoveLibrary(library.id)}
+              className="p-1 rounded hover:text-red-500"
+              title="Disconnect this library"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        ))}
+        <button
+          type="button"
+          onClick={() => setShowAddServer((open) => !open)}
+          className="w-full text-left px-4 py-1.5 text-sm text-blue-600 dark:text-blue-400 hover:bg-gray-200 dark:hover:bg-gray-800"
+        >
+          Add a server
+        </button>
+        {showAddServer && (
+          <form
+            className="px-4 py-2 flex flex-col gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void onAddLibrary(serverUrl, serverPassword).then(() => {
+                setServerPassword('');
+                setShowAddServer(false);
+              }).catch(() => {});
+            }}
+          >
+            <input
+              type="url"
+              value={serverUrl}
+              onChange={(event) => setServerUrl(event.target.value)}
+              placeholder="http://library:8787"
+              required
+              className="px-2 py-1 text-sm border border-gray-200 dark:border-gray-600 rounded bg-white dark:bg-gray-800"
+            />
+            <input
+              type="password"
+              value={serverPassword}
+              onChange={(event) => setServerPassword(event.target.value)}
+              placeholder="Password"
+              required
+              className="px-2 py-1 text-sm border border-gray-200 dark:border-gray-600 rounded bg-white dark:bg-gray-800"
+            />
+            <button type="submit" disabled={connecting} className="px-2 py-1 text-sm bg-blue-600 text-white rounded disabled:opacity-60">
+              {connecting ? 'Connecting…' : 'Connect'}
+            </button>
+          </form>
+        )}
+        {canPickFolder && (
+          <button type="button" onClick={onChooseFolder} className="w-full text-left px-4 py-1.5 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800">
+            Choose a music folder
+          </button>
+        )}
+        {canHost ? (
+          <button type="button" onClick={() => setShowHost((open) => !open)} className="w-full text-left px-4 py-1.5 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800">
+            Host on this computer
+          </button>
+        ) : (
+          <button type="button" onClick={() => setShowServeHelp(true)} className="w-full text-left px-4 py-1.5 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-800">
+            Serve from this computer
+          </button>
+        )}
+        {canHost && showHost && (
+          <form
+            className="px-4 py-2 flex flex-col gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void onHost(musicDir, hostPassword).catch(() => {});
+            }}
+          >
+            <input
+              type="text"
+              value={musicDir}
+              onChange={(event) => setMusicDir(event.target.value)}
+              placeholder="~/Music"
+              required
+              className="px-2 py-1 text-sm border border-gray-200 dark:border-gray-600 rounded bg-white dark:bg-gray-800"
+            />
+            <input
+              type="password"
+              value={hostPassword}
+              onChange={(event) => setHostPassword(event.target.value)}
+              placeholder="Password"
+              required
+              className="px-2 py-1 text-sm border border-gray-200 dark:border-gray-600 rounded bg-white dark:bg-gray-800"
+            />
+            <button type="submit" disabled={connecting} className="px-2 py-1 text-sm bg-blue-600 text-white rounded disabled:opacity-60">
+              {connecting ? 'Starting…' : 'Start hosting'}
+            </button>
+          </form>
+        )}
+        {connectError && <p className="px-4 py-1 text-xs text-red-600 dark:text-red-400">{connectError}</p>}
+        <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mt-3 mb-2 px-4">Library</div>
         <MenuItem icon={LibIcon} label="All songs" active={filterType === 'All'} onClick={() => { setFilterType('All'); setFilterValue(''); }} />
         <MenuItem icon={ListMusic} label="Playlists" active={filterType === 'Playlist'} onClick={() => { setFilterType('Playlist'); setFilterValue(''); }} />
         <div

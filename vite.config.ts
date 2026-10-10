@@ -147,19 +147,19 @@ export default defineConfig(({ mode }) => {
     tailwindcss(),
     devSharePlugin(),
     VitePWA({
-      disable: pages,
       registerType: 'autoUpdate',
       devOptions: { enabled: true },
-      includeAssets: ['apple-touch-icon.png', 'favicon-32.png'],
+      includeAssets: ['apple-touch-icon.png', 'favicon-32.png', 'favicon-16.png'],
       manifest: {
         name: 'KyTunes',
         short_name: 'KyTunes',
-        description: 'Play a folder on this computer, or stream your library from another machine.',
+        description: 'Play music saved on this device, or connect a library and keep the songs you play.',
         theme_color: '#6366f1',
         background_color: '#111827',
         display: 'standalone',
-        start_url: './',
-        scope: './',
+        id: pages ? '/KyTunes/' : '/',
+        start_url: pages ? '/KyTunes/' : '/',
+        scope: pages ? '/KyTunes/' : '/',
         icons: [
           { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },
@@ -170,6 +170,15 @@ export default defineConfig(({ mode }) => {
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
         navigateFallbackDenylist: [/^\/api\//],
         runtimeCaching: [
+          {
+            urlPattern: /\/demo\/.+\.mp3$/i,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'demo-audio',
+              rangeRequests: true,
+              expiration: { maxEntries: 8, maxAgeSeconds: 60 * 60 * 24 * 365 },
+            },
+          },
           {
             urlPattern: /^https:\/\/cdn\.jsdelivr\.net\/.*/i,
             handler: 'CacheFirst',

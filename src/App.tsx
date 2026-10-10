@@ -1,16 +1,15 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type { FilterType, HistorySortColumn, HistoryViewItem, PlayHistoryEntry, PlayHistoryState, RepeatMode, Song, SongSortColumn, SortDirection } from './types';
-import { getDirectoryHandle, saveDirectoryHandle, getSongsCache, saveSongsCache, getPlaylists, savePlaylists, getPlayHistory, savePlayHistory, getArtworkBlob, saveArtworkBlob, getArtistUrl, saveArtistUrl, getArtistGroupOverrides, saveArtistGroupOverrides, getQueue, saveQueue, getPlaybackPreferences, savePlaybackPreferences, getLibrarySource, saveLibrarySource, getRemoteSession, saveRemoteSession, getRemoteSongsCache, saveRemoteSongsCache, getKeptSongIds, getKeptAudio, saveKeptAudio, deleteKeptAudio } from './db';
+import { getDirectoryHandle, saveDirectoryHandle, getSongsCache, saveSongsCache, getPlaylists, savePlaylists, getPlayHistory, savePlayHistory, getArtworkBlob, saveArtworkBlob, getArtistUrl, saveArtistUrl, getArtistGroupOverrides, saveArtistGroupOverrides, getQueue, saveQueue, getPlaybackPreferences, savePlaybackPreferences, getRemoteSession, getRemoteSongsCache, getKeptSongIds, getKeptAudio, saveKeptAudio, deleteKeptAudio, getConnectedLibraries, saveConnectedLibraries, getKeptSongRecords, saveKeptSongRecords } from './db';
 import { getCanonicalArtist, artistGroupKey } from './lib/artistNorm';
 import type { AlbumArtworkResult } from './lib/artwork';
 import { searchArtistImage, searchAlbumArtwork } from './lib/artwork';
 import { collectFiles, parseMetadataInBackground } from './lib/scanner';
-import { attachRemote, downloadRemoteSong, fetchRemoteLibrary, loginRemote, normalizeServerUrl, probeSameOriginLibrary, requestRemoteRescan, RemoteAuthError, type RemoteSession } from './lib/remoteLibrary';
-import { demoSongs, isGithubPages } from './lib/demoLibrary';
+import { downloadRemoteSong, fetchRemoteLibrary, loginRemote, normalizeServerUrl, probeLibrary, requestRemoteRescan, RemoteAuthError } from './lib/remoteLibrary';
+import { libraryName, LOCAL_LIBRARY_ID, mergeCatalog, nextLibraryId, plainKeptRecord, type ConnectedLibrary, type KeptSongRecord } from './lib/catalog';
 import { Player } from './components/Player';
 import { Sidebar } from './components/Sidebar';
 import { Library } from './components/Library';
-import { LibraryConnect } from './components/LibraryConnect';
 import { Visualizer } from './components/Visualizer';
 import { SongDetailsPane } from './components/NowPlaying';
 import { ResizeHandle } from './components/ResizeHandle';
@@ -59,13 +58,11 @@ function App() {
   const [songs, setSongs] = useState<Song[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState('');
-  const [hasPermission, setHasPermission] = useState(false);
   const [dirHandle, setDirHandle] = useState<FileSystemDirectoryHandle | null>(null);
   const [libraryMode, setLibraryMode] = useState<'local' | 'remote' | 'demo' | 'choose' | null>(null);
   const [booting, setBooting] = useState(true);
-  const [remoteSession, setRemoteSession] = useState<RemoteSession | null>(null);
-  const [savedServerUrl, setSavedServerUrl] = useState('');
-  const [sameOriginReady, setSameOriginReady] = useState(false);
+  const [libraries, setLibraries] = useState<ConnectedLibrary[]>([]);
+  const [libraryFilter, setLibraryFilter] = useState(LOCAL_LIBRARY_ID);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [keptIds, setKeptIds] = useState<Set<string>>(() => new Set());
@@ -131,6 +128,21 @@ function App() {
   const [detailsPanelW, setDetailsPanelW] = useState(280);
 
   const abortRef = useRef<AbortController | null>(null);
+  const partsRef = useRef<{ folder: Song[]; kept: KeptSongRecord[]; libraries: ConnectedLibrary[] }>({
+    folder: [],
+    kept: [],
+    libraries: [],
+  });
+  const downloadingRef = useRef(new Set<string>());
+  const publishCatalog = useCallback(() => {
+    setSongs(mergeCatalog({
+      folderSongs: partsRef.current.folder,
+      kept: partsRef.current.kept,
+      libraries: partsRef.current.libraries,
+    }));
+    setLibraries(partsRef.current.libraries.map((library) => ({ ...library })));
+    setKeptIds(new Set(partsRef.current.kept.map((record) => record.id)));
+  }, []);
 
   const doScan = useCallback(async (handle: FileSystemDirectoryHandle) => {
     abortRef.current?.abort();
@@ -142,7 +154,8 @@ function App() {
         setLoadingStatus(`Found ${count} files...`);
       });
       setLoadingStatus(`Found ${initialSongs.length} songs. Loading...`);
-      setSongs(initialSongs);
+      partsRef.current.folder = initialSongs;
+      publishCatalog();
       setLoading(false);
 
       const controller = new AbortController();
@@ -152,106 +165,109 @@ function App() {
       await parseMetadataInBackground(
         initialSongs,
         (updates) => {
-          setSongs(prev => {
-            const next = [...prev];
-            for (let i = 0; i < next.length; i++) {
-              const update = updates.get(next[i].id);
-              if (update) next[i] = { ...next[i], ...update };
-            }
-            return next;
+          partsRef.current.folder = partsRef.current.folder.map((song) => {
+            const update = updates.get(song.id);
+            return update ? { ...song, ...update } : song;
           });
+          publishCatalog();
         },
         (done, total) => setLoadingStatus(`Enriching metadata: ${done} / ${total}`),
         controller.signal
       );
 
-      setSongs(current => { saveSongsCache(current); return current; });
+      await saveSongsCache(partsRef.current.folder);
       setLoadingStatus('');
     } catch (e) {
       console.error(e);
       setLoading(false);
     }
-  }, []);
+  }, [publishCatalog]);
 
-  const applyRemoteLibrary = useCallback((
-    session: RemoteSession,
-    nextSongs: Song[],
-    payload?: { scanning: boolean; enriching: boolean; enrichDone: number; enrichTotal: number },
-  ) => {
-    setSongs(attachRemote(session, nextSongs));
-    setRemoteSession(session);
-    setLibraryMode('remote');
-    setHasPermission(true);
-    if (payload && (payload.scanning || payload.enriching)) {
-      setLoading(payload.scanning && nextSongs.length === 0);
-      setLoadingStatus(
-        payload.scanning && nextSongs.length === 0
+  const storeLibraries = useCallback(async (next: ConnectedLibrary[]) => {
+    partsRef.current.libraries = next;
+    await saveConnectedLibraries(next);
+    publishCatalog();
+  }, [publishCatalog]);
+
+  const markLibraryUnreachable = useCallback((id: string) => {
+    const current = partsRef.current.libraries.find((item) => item.id === id);
+    if (!current || current.reachable === false) return;
+    partsRef.current.libraries = partsRef.current.libraries.map((item) => item.id === id
+      ? { ...item, reachable: false, scanning: false, enriching: false }
+      : item);
+    publishCatalog();
+  }, [publishCatalog]);
+
+  const refreshLibrary = useCallback(async (library: ConnectedLibrary, rescan = false) => {
+    try {
+      if (rescan) await requestRemoteRescan(library.session);
+      const payload = await fetchRemoteLibrary(library.session);
+      const next = partsRef.current.libraries.map((item) => item.id === library.id
+        ? { ...item, songs: payload.songs, scanning: payload.scanning, enriching: payload.enriching, reachable: true }
+        : item);
+      await storeLibraries(next);
+      if (payload.scanning || payload.enriching) {
+        setLoadingStatus(payload.scanning && payload.songs.length === 0
           ? 'Scanning the library…'
-          : `Reading tags ${payload.enrichDone} / ${payload.enrichTotal}`,
-      );
-    } else {
-      setLoading(false);
-      setLoadingStatus('');
+          : `Reading tags ${payload.enrichDone} / ${payload.enrichTotal}`);
+      } else {
+        setLoadingStatus('');
+      }
+    } catch (error) {
+      markLibraryUnreachable(library.id);
+      if (error instanceof RemoteAuthError) setConnectError(`Sign in again to ${library.name}.`);
+      throw error;
     }
-  }, []);
-
-  const refreshRemote = useCallback(async (session: RemoteSession, rescan = false) => {
-    if (rescan) await requestRemoteRescan(session);
-    const payload = await fetchRemoteLibrary(session);
-    applyRemoteLibrary(session, payload.songs, payload);
-    await saveRemoteSongsCache(payload.songs);
-  }, [applyRemoteLibrary]);
+  }, [storeLibraries, markLibraryUnreachable]);
 
   useEffect(() => {
     async function init() {
       try {
-        const kept = await getKeptSongIds();
-        setKeptIds(new Set(kept));
-        setSameOriginReady(await probeSameOriginLibrary());
-        const source = await getLibrarySource();
         const session = await getRemoteSession();
-        if (session?.baseUrl) setSavedServerUrl(session.baseUrl);
+        const remoteCache = (await getRemoteSongsCache()) ?? [];
+        let kept = await getKeptSongRecords();
+        if (kept.length === 0) {
+          const oldIds = await getKeptSongIds();
+          kept = oldIds.flatMap((id) => {
+            const song = remoteCache.find((item) => item.id === id);
+            const record: KeptSongRecord = {
+              id,
+              remoteId: id,
+              originLibraryId: '1',
+              baseUrl: session?.baseUrl ?? '',
+              song: song ?? { id, title: id.split('/').pop() || id, artist: 'Downloaded', album: 'Downloaded', duration: 0 },
+            };
+            return [plainKeptRecord(record)];
+          });
+          if (kept.length > 0) await saveKeptSongRecords(kept);
+        }
+        partsRef.current.kept = kept;
 
-        if (source === 'remote' && session && session.expiresAt > Date.now()) {
-          const cached = await getRemoteSongsCache();
-          if (cached && cached.length > 0) applyRemoteLibrary(session, cached);
-          try {
-            const payload = await fetchRemoteLibrary(session);
-            applyRemoteLibrary(session, payload.songs, payload);
-            await saveRemoteSongsCache(payload.songs);
-          } catch (error) {
-            if (error instanceof RemoteAuthError || !(cached && cached.length > 0)) {
-              setLibraryMode('choose');
-              setHasPermission(false);
-              setConnectError(error instanceof Error ? error.message : 'Could not reach the library server.');
-            }
-          }
-        } else if (source === 'choose' || (source === 'remote' && (!session || session.expiresAt <= Date.now()))) {
-          const handle = await getDirectoryHandle();
-          if (handle) setDirHandle(handle);
-          setLibraryMode('choose');
-          if (source === 'remote') setConnectError('Sign in again to keep streaming.');
-        } else {
-          const handle = await getDirectoryHandle();
-          if (handle) {
-            setDirHandle(handle);
-            setLibraryMode('local');
-            if (source !== 'local') await saveLibrarySource('local');
-            const perm = await (handle as any).queryPermission({ mode: 'read' });
-            if (perm === 'granted') {
-              setHasPermission(true);
-              const cache = await getSongsCache();
-              if (cache && cache.length > 0) setSongs(cache);
-              else await doScan(handle);
-            }
-          } else if (isGithubPages()) {
-            setSongs(demoSongs());
-            setLibraryMode('demo');
-            setHasPermission(true);
-          } else {
-            setLibraryMode('choose');
+        let connected = await getConnectedLibraries();
+        if (connected.length === 0 && session && session.expiresAt > Date.now()) {
+          connected = [{
+            id: '1',
+            name: libraryName(session.baseUrl),
+            baseUrl: session.baseUrl,
+            session,
+            songs: remoteCache,
+          }];
+          await saveConnectedLibraries(connected);
+        }
+        partsRef.current.libraries = connected;
+
+        const handle = await getDirectoryHandle();
+        if (handle) {
+          setDirHandle(handle);
+          const perm = await (handle as any).queryPermission({ mode: 'read' });
+          if (perm === 'granted') {
+            const cache = await getSongsCache();
+            if (cache && cache.length > 0) partsRef.current.folder = cache;
+            else await doScan(handle);
           }
         }
+        setLibraryMode('local');
+        publishCatalog();
 
         const list = await getPlaylists();
         setPlaylistsState(list);
@@ -265,43 +281,72 @@ function App() {
         setShuffleOn(playbackPreferences.shuffleOn);
         setRepeatMode(playbackPreferences.repeatMode);
         setShowSongDetails(playbackPreferences.showSongDetails);
+
+        void (async () => {
+          for (const library of connected) {
+            try {
+              await refreshLibrary(library);
+            } catch (error) {
+              if (error instanceof RemoteAuthError) setConnectError(`Sign in again to ${library.name}.`);
+            }
+          }
+        })();
       } finally {
         setBooting(false);
       }
     }
     init();
-  }, [doScan, applyRemoteLibrary]);
+  }, [doScan, publishCatalog, refreshLibrary]);
 
   useEffect(() => {
-    if (libraryMode !== 'remote' || !remoteSession) return;
+    const pending = libraries.filter((library) => library.scanning || library.enriching);
+    if (pending.length === 0) return;
     let cancelled = false;
-    let timer = 0;
-    const tick = async () => {
-      try {
-        const payload = await fetchRemoteLibrary(remoteSession);
-        if (cancelled) return;
-        applyRemoteLibrary(remoteSession, payload.songs, payload);
-        if (!payload.scanning && !payload.enriching) {
-          await saveRemoteSongsCache(payload.songs);
-        } else {
-          timer = window.setTimeout(tick, 2500);
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        for (const library of pending) {
+          if (cancelled) return;
+          try {
+            await refreshLibrary(library);
+          } catch {
+            // Keep the songs already saved for this library.
+          }
         }
-      } catch (error) {
-        if (cancelled) return;
-        if (error instanceof RemoteAuthError) {
-          setConnectError('Sign in again to keep streaming.');
-          setLibraryMode('choose');
-          setHasPermission(false);
-          setLoading(false);
-        }
-      }
-    };
-    timer = window.setTimeout(tick, 2500);
+      })();
+    }, 2500);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [libraryMode, remoteSession, applyRemoteLibrary]);
+  }, [libraries, refreshLibrary]);
+
+  useEffect(() => {
+    if (libraries.length === 0) return;
+    let cancelled = false;
+    const check = async () => {
+      for (const library of [...partsRef.current.libraries]) {
+        if (cancelled) return;
+        const up = await probeLibrary(library.session);
+        if (cancelled) return;
+        const current = partsRef.current.libraries.find((item) => item.id === library.id);
+        if (!current) continue;
+        if (up && current.reachable !== true) {
+          try {
+            await refreshLibrary(current);
+          } catch {
+            // The refresh already hid this library's songs.
+          }
+        } else if (!up) {
+          markLibraryUnreachable(current.id);
+        }
+      }
+    };
+    const timer = window.setInterval(() => { void check(); }, 15000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [libraries.length, refreshLibrary, markLibraryUnreachable]);
 
   useEffect(() => {
     savePlaybackPreferences({ shuffleOn, repeatMode, showSongDetails });
@@ -311,13 +356,12 @@ function App() {
     if (!dirHandle) return;
     const perm = await (dirHandle as any).requestPermission({ mode: 'read' });
     if (perm === 'granted') {
-      setHasPermission(true);
       setLibraryMode('local');
       setConnectError(null);
-      await saveLibrarySource('local');
       const cache = await getSongsCache();
       if (cache && cache.length > 0) {
-        setSongs(cache);
+        partsRef.current.folder = cache;
+        publishCatalog();
       } else {
         await doScan(dirHandle);
       }
@@ -329,9 +373,7 @@ function App() {
       const handle = await (window as any).showDirectoryPicker();
       setDirHandle(handle);
       await saveDirectoryHandle(handle);
-      await saveLibrarySource('local');
       setLibraryMode('local');
-      setHasPermission(true);
       setConnectError(null);
       await doScan(handle);
     } catch (e) {
@@ -347,13 +389,13 @@ function App() {
     }
     const perm = await (dirHandle as any).queryPermission({ mode: 'read' });
     if (perm === 'granted') {
-      setHasPermission(true);
       setLibraryMode('local');
       setConnectError(null);
-      await saveLibrarySource('local');
       const cache = await getSongsCache();
-      if (cache && cache.length > 0) setSongs(cache);
-      else await doScan(dirHandle);
+      if (cache && cache.length > 0) {
+        partsRef.current.folder = cache;
+        publishCatalog();
+      } else await doScan(dirHandle);
       return;
     }
     await requestPermission();
@@ -365,51 +407,110 @@ function App() {
     try {
       const baseUrl = baseUrlInput ? normalizeServerUrl(baseUrlInput) : '';
       const session = await loginRemote(baseUrl, password);
-      await saveRemoteSession(session);
-      await saveLibrarySource('remote');
-      setSavedServerUrl(session.baseUrl);
-      setLoading(true);
-      setLoadingStatus('Loading library…');
       const payload = await fetchRemoteLibrary(session);
-      applyRemoteLibrary(session, payload.songs, payload);
-      await saveRemoteSongsCache(payload.songs);
+      const existing = partsRef.current.libraries.find((library) => library.baseUrl === session.baseUrl);
+      const id = existing?.id ?? nextLibraryId(partsRef.current.libraries);
+      const next = [
+        ...partsRef.current.libraries.filter((library) => library.id !== id),
+        {
+          id,
+          name: libraryName(session.baseUrl),
+          baseUrl: session.baseUrl,
+          session,
+          songs: payload.songs,
+          scanning: payload.scanning,
+          enriching: payload.enriching,
+          reachable: true,
+        },
+      ];
+      await storeLibraries(next);
+      setLibraryFilter('all');
+      setLoading(false);
+      setLoadingStatus('');
     } catch (error) {
       setLoading(false);
       setLoadingStatus('');
-      setConnectError(error instanceof Error ? error.message : 'Could not connect.');
+      const message = error instanceof Error ? error.message : 'Could not connect.';
+      setConnectError(message);
+      throw error;
     } finally {
       setConnecting(false);
     }
   };
 
-  const openDemo = () => {
-    setSongs(demoSongs());
-    setLibraryMode('demo');
-    setHasPermission(true);
-    setConnectError(null);
-    setLoading(false);
-    setLoadingStatus('');
-    setCurrentSong(null);
-    setIsPlaying(false);
+  const removeLibrary = async (id: string) => {
+    await storeLibraries(partsRef.current.libraries.filter((library) => library.id !== id));
+    setLibraryFilter((current) => current === id ? LOCAL_LIBRARY_ID : current);
   };
 
-  const chooseDifferentLibrary = () => {
-    abortRef.current?.abort();
-    setIsPlaying(false);
-    setCurrentSong(null);
-    setLoading(false);
-    setLoadingStatus('');
-    setHasPermission(false);
-    setLibraryMode('choose');
-    void saveLibrarySource('choose');
+  const hostHere = async (musicDir: string, password: string) => {
+    setConnecting(true);
+    setConnectError(null);
+    try {
+      const res = await fetch('/dev-host/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ musicDir, password }),
+      });
+      const data = await res.json() as { error?: string };
+      if (!res.ok) throw new Error(data.error || 'Could not start the server.');
+    } catch (error) {
+      setConnecting(false);
+      setConnectError(error instanceof Error ? error.message : 'Could not start the server.');
+      throw error;
+    }
+    await connectRemote('', password);
   };
+
+  const saveRemoteCopy = useCallback(async (song: Song) => {
+    if (!song.remoteId || !song.libraryId || song.libraryId === LOCAL_LIBRARY_ID) return;
+    if (downloadingRef.current.has(song.id) || partsRef.current.kept.some((record) => record.id === song.id)) return;
+    const library = partsRef.current.libraries.find((item) => item.id === song.libraryId);
+    if (!library) return;
+    downloadingRef.current.add(song.id);
+    setKeepBusy(true);
+    setLoadingStatus('Saving a copy on this device…');
+    try {
+      const blob = await downloadRemoteSong(library.session, song.remoteId, (loaded, total) => {
+        if (total > 0) {
+          const pct = Math.min(100, Math.round((loaded / total) * 100));
+          setLoadingStatus(`Saving a copy on this device… ${pct}%`);
+        }
+      });
+      await saveKeptAudio(song.id, blob);
+      const record = plainKeptRecord({
+        id: song.id,
+        remoteId: song.remoteId,
+        originLibraryId: song.libraryId,
+        baseUrl: library.baseUrl,
+        song,
+      });
+      partsRef.current.kept = [...partsRef.current.kept.filter((item) => item.id !== song.id), record];
+      await saveKeptSongRecords(partsRef.current.kept);
+      publishCatalog();
+      setCurrentSong((prev) => prev && prev.id === song.id ? { ...prev, libraryId: LOCAL_LIBRARY_ID, source: 'local', streamUrl: undefined } : prev);
+      setLoadingStatus('');
+    } catch (error) {
+      const name = (error as { name?: string }).name;
+      setLoadingStatus(name === 'QuotaExceededError'
+        ? 'Not enough space on this device to keep that song.'
+        : '');
+    } finally {
+      downloadingRef.current.delete(song.id);
+      setKeepBusy(false);
+    }
+  }, [publishCatalog]);
+
+  const forgetRemoteCopy = useCallback(async (song: Song) => {
+    partsRef.current.kept = partsRef.current.kept.filter((record) => record.id !== song.id);
+    await deleteKeptAudio(song.id);
+    await saveKeptSongRecords(partsRef.current.kept);
+    publishCatalog();
+  }, [publishCatalog]);
 
   const resolveAudioUrl = useCallback(async (song: Song) => {
-    if (song.source === 'remote') {
-      const kept = await getKeptAudio(song.id);
-      if (kept) return { url: URL.createObjectURL(kept), revoke: true };
-      if (song.streamUrl) return { url: song.streamUrl, revoke: false };
-    }
+    const kept = await getKeptAudio(song.id);
+    if (kept) return { url: URL.createObjectURL(kept), revoke: true };
     if (song.fileHandle) {
       const file = await song.fileHandle.getFile();
       return { url: URL.createObjectURL(file), revoke: true };
@@ -419,37 +520,13 @@ function App() {
   }, []);
 
   const toggleKeep = useCallback(async () => {
-    if (!currentSong || currentSong.source !== 'remote' || !remoteSession || keepBusy) return;
+    if (!currentSong || keepBusy) return;
     if (keptIds.has(currentSong.id)) {
-      await deleteKeptAudio(currentSong.id);
-      setKeptIds((prev) => {
-        const next = new Set(prev);
-        next.delete(currentSong.id);
-        return next;
-      });
+      await forgetRemoteCopy(currentSong);
       return;
     }
-    setKeepBusy(true);
-    setLoadingStatus('Saving a copy on this device…');
-    try {
-      const blob = await downloadRemoteSong(remoteSession, currentSong.id, (loaded, total) => {
-        if (total > 0) {
-          const pct = Math.min(100, Math.round((loaded / total) * 100));
-          setLoadingStatus(`Saving a copy on this device… ${pct}%`);
-        }
-      });
-      await saveKeptAudio(currentSong.id, blob);
-      setKeptIds((prev) => new Set(prev).add(currentSong.id));
-      setLoadingStatus('');
-    } catch (error) {
-      const name = (error as { name?: string }).name;
-      setLoadingStatus(name === 'QuotaExceededError'
-        ? 'Not enough space on this device to keep that song.'
-        : (error instanceof Error ? error.message : 'Could not save that song.'));
-    } finally {
-      setKeepBusy(false);
-    }
-  }, [currentSong, remoteSession, keepBusy, keptIds]);
+    await saveRemoteCopy(currentSong);
+  }, [currentSong, keepBusy, keptIds, forgetRemoteCopy, saveRemoteCopy]);
 
   const songMap = useMemo(() => new Map(songs.map(song => [song.id, song])), [songs]);
   const displaySong = selectedSong ?? currentSong;
@@ -525,6 +602,9 @@ function App() {
     if (filterType === 'History') return sortedHistoryItems.map(item => item.song);
     if (filterType === 'Queue') return queueSongs;
     let list = songs;
+    if (libraryFilter !== 'all' && filterType !== 'Playlist') {
+      list = list.filter((song) => (song.libraryId ?? LOCAL_LIBRARY_ID) === libraryFilter);
+    }
     if (filterType === 'Artists' && filterValue) {
       // Match by canonical name so "Kid Cudi feat. X" rows still show when
       // the user has selected "Kid Cudi" from the grouped sidebar list.
@@ -540,7 +620,7 @@ function App() {
       list = list.filter(s => ids.has(s.id));
     }
     return list;
-  }, [songs, filterType, filterValue, playlists, sortedHistoryItems]);
+  }, [songs, filterType, filterValue, playlists, sortedHistoryItems, libraryFilter]);
 
   const visibleSongs = useMemo(() => {
     let list = songListForView;
@@ -639,7 +719,8 @@ function App() {
     setCurrentSong(song);
     setSelectedSong(song);
     setIsPlaying(true);
-  }, [shuffleOn, visibleSongs, playbackContextKey, syncShuffleCycle]);
+    void saveRemoteCopy(song);
+  }, [shuffleOn, visibleSongs, playbackContextKey, syncShuffleCycle, saveRemoteCopy]);
 
   const playSongById = useCallback((songId: string, options?: { source?: 'manual' | 'advance' }) => {
     const song = songMap.get(songId);
@@ -922,8 +1003,8 @@ function App() {
   }, []);
 
   // ─── Welcome screen ────────────────────────────────
-  const libraryConnected = libraryMode === 'remote' || libraryMode === 'demo' || (libraryMode === 'local' && hasPermission && !!dirHandle);
   const canPickFolder = 'showDirectoryPicker' in window;
+  const canHost = import.meta.env.DEV && (import.meta.env as { VITE_KYTUNES_ROLE?: string }).VITE_KYTUNES_ROLE !== 'client';
   const mobileCover = narrow && (showVisualizer || (showSongDetails && !!displaySong));
 
   if (booting || libraryMode === null) {
@@ -931,22 +1012,6 @@ function App() {
       <div className="flex h-screen items-center justify-center bg-gray-50 text-gray-800 dark:bg-gray-900 dark:text-gray-100">
         <Loader2 className="w-10 h-10 animate-spin text-blue-500" />
       </div>
-    );
-  }
-
-  if (!libraryConnected) {
-    return (
-      <LibraryConnect
-        canPickFolder={canPickFolder}
-        hasSavedFolder={!!dirHandle}
-        sameOriginReady={sameOriginReady}
-        savedServerUrl={savedServerUrl}
-        error={connectError}
-        connecting={connecting}
-        onChooseFolder={() => { void chooseFolder(); }}
-        onConnect={(baseUrl, password) => { void connectRemote(baseUrl, password); }}
-        onPlayDemo={openDemo}
-      />
     );
   }
 
@@ -983,9 +1048,10 @@ function App() {
         onSongDetailsToggle={() => setShowSongDetails(v => !v)}
         showVisualizer={showVisualizer}
         onVisualizerToggle={() => setShowVisualizer(v => !v)}
-        keepState={currentSong?.source === 'remote' ? (keepBusy ? 'saving' : keptIds.has(currentSong.id) ? 'kept' : 'available') : undefined}
+        keepState={currentSong?.remoteId ? (keepBusy ? 'saving' : keptIds.has(currentSong.id) ? 'kept' : 'available') : undefined}
         onToggleKeep={() => { void toggleKeep(); }}
         resolveAudioUrl={resolveAudioUrl}
+        onLibraryUnavailable={markLibraryUnreachable}
       />
 
       <div className={`flex flex-1 overflow-hidden ${isVizMaximized ? 'flex-col' : ''}`}>
@@ -993,7 +1059,7 @@ function App() {
         {!isVizMaximized && !mobileCover && (!narrow || mobilePane === 'browse') && (
         <div className={`${narrow ? 'flex-1 min-w-0' : 'shrink-0'} h-full border-r border-gray-300 dark:border-gray-800 flex flex-col`} style={narrow ? undefined : { width: sidebarW }}>
           <Sidebar
-            songs={songs}
+            songs={libraryFilter === 'all' ? songs : songs.filter((song) => (song.libraryId ?? LOCAL_LIBRARY_ID) === libraryFilter)}
             filterType={filterType}
             setFilterType={setFilterType}
             filterValue={filterValue}
@@ -1013,6 +1079,17 @@ function App() {
             onClearQueue={clearQueue}
             onPlayHistoryItem={playSong}
             onPlaylistsChange={setPlaylists}
+            libraries={libraries.map((library) => ({ id: library.id, name: library.name, reachable: library.reachable }))}
+            libraryFilter={libraryFilter}
+            onLibraryFilter={setLibraryFilter}
+            onAddLibrary={connectRemote}
+            onRemoveLibrary={(id) => { void removeLibrary(id); }}
+            onChooseFolder={() => { void chooseFolder(); }}
+            canPickFolder={canPickFolder}
+            canHost={canHost}
+            onHost={hostHere}
+            connectError={connectError}
+            connecting={connecting}
           />
         </div>
         )}
@@ -1030,12 +1107,8 @@ function App() {
           )}
           <div className="flex items-center px-4 py-1 bg-gray-50 dark:bg-[#1a1a1a] border-b border-gray-200 dark:border-gray-800 shrink-0">
             <span className="flex-1 text-xs text-gray-500 truncate">
-              {loadingStatus || (filterType === 'History' ? `${filteredHistoryItems.length} plays` : filterType === 'Queue' ? `${queueSongs.length} queued` : `${songs.length} songs`)}
+              {loadingStatus || (filterType === 'History' ? `${filteredHistoryItems.length} plays` : filterType === 'Queue' ? `${queueSongs.length} queued` : `${visibleSongs.length} songs`)}
             </span>
-            <button type="button" onClick={chooseDifferentLibrary} className="text-xs text-gray-500 hover:text-blue-500 shrink-0 ml-3">
-              Change library
-            </button>
-   
           </div>
           <Library
             songs={visibleSongs}
@@ -1059,18 +1132,12 @@ function App() {
             selectedSongId={selectedSong?.id}
             contextSongId={currentVisibleIndex >= 0 ? currentSong?.id : undefined}
             onRescan={() => {
-              if (libraryMode === 'demo') {
-                setSongs(demoSongs());
-                return;
-              }
-              if (libraryMode === 'remote' && remoteSession) {
-                setLoadingStatus('Rescanning library…');
-                void refreshRemote(remoteSession, true).catch((error: unknown) => {
+              if (dirHandle) void doScan(dirHandle);
+              for (const library of partsRef.current.libraries) {
+                void refreshLibrary(library, true).catch((error: unknown) => {
                   setLoadingStatus(error instanceof Error ? error.message : 'Rescan failed');
                 });
-                return;
               }
-              if (dirHandle) void doScan(dirHandle);
             }}
             compact={narrow}
             keptIds={keptIds}
